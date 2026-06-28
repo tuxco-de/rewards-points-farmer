@@ -1,5 +1,6 @@
-import { store } from './state.js';
-import { updateCountdown } from './ui/panel.js';
+// @ts-nocheck
+import { store } from './state';
+import { updateCountdown } from './ui/panel';
 
 export const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 

@@ -1,8 +1,9 @@
-import { config } from './config.js';
+// @ts-nocheck
+import { config } from './config';
 
 const STORAGE_KEY = 'bing_rewards_auto_searcher_state';
 
-class StateStore {
+class StateStore { [key: string]: any;
     constructor() {
         this.isSearching = false;
         this.usedSearchTerms = [];

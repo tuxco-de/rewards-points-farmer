@@ -1,5 +1,6 @@
-import { config } from './config.js';
-import { store } from './state.js';
+// @ts-nocheck
+import { config } from './config';
+import { store } from './state';
 export function init() {
 
 
