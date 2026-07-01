@@ -1,18 +1,28 @@
 const path = require('path');
 const webpack = require('webpack');
-const fs = require('fs');
 const TerserPlugin = require('terser-webpack-plugin');
+const pkg = require('./package.json');
 
-const originalCode = fs.readFileSync(path.resolve(__dirname, 'dist', 'bing_rewards.user.js'), 'utf-8');
-const bannerMatch = originalCode.match(/(\/\/\s*==UserScript==[\s\S]*?\/\/\s*==\/UserScript==)/);
-const banner = bannerMatch ? bannerMatch[1] : '';
+const banner = `// ==UserScript==
+// @name         Rewards Points Farmer
+// @name:en      ${pkg.description}
+// @namespace    ${pkg.author}
+// @version      ${pkg.version}
+// @description  自动完成 Microsoft Rewards 在必应（Bing）上的每日搜索任务，带有可配置的UI界面，模拟人工操作以提高安全性。目前最稳定的脚本，全自动完成电脑端90分任务。
+// @description:en  Automatically completes Microsoft Rewards daily search tasks on Bing. Features a configurable UI and mimics human behavior for better safety.
+// @author       ${pkg.author}
+// @match        *://*.bing.com/*
+// @grant        none
+// @run-at       document-end
+// @license      ${pkg.license}
+// ==/UserScript==`;
 
 module.exports = {
   mode: 'production',
   entry: './src/index.ts',
   output: {
     path: path.resolve(__dirname, 'dist'),
-    filename: 'bing_rewards.user.js',
+    filename: 'rewards-points-farmer.user.js',
   },
   module: {
     rules: [
@@ -27,12 +37,12 @@ module.exports = {
     extensions: ['.tsx', '.ts', '.js'],
   },
   optimization: {
-    minimize: true,
+    minimize: false,
     minimizer: [
       new TerserPlugin({
         terserOptions: {
           format: {
-            comments: false,
+            comments: /==\/?UserScript==|@/i,
           },
         },
         extractComments: false,

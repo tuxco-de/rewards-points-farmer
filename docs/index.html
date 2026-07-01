@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rewards Points Farmer - 全自动 Microsoft Rewards 挂机脚本</title>
+    <meta name="description" content="全自动完成 Microsoft Rewards 每日搜索任务，支持模拟真实人工操作、可配置 UI，让你的积分获取更高效。">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Rewards Points Farmer</h1>
+            <p class="subtitle">一款稳定、智能、安全的 Microsoft Rewards 全自动搜索挂机脚本</p>
+            <a href="https://github.com/veegn/rewards-points-farmer/releases/latest/download/rewards-points-farmer.user.js" class="btn">🚀 立即安装脚本</a>
+        </header>
+
+        <section id="features">
+            <h2>✨ 功能介绍</h2>
+            <ul>
+                <li><strong>全自动执行任务</strong>：一键开启，自动读取后台数据并完成每日 PC 搜索与移动端搜索任务。</li>
+                <li><strong>深度人工模拟</strong>：内置真实打字机效果、随机页面滚动、长短随机延迟等机制，降低被检测为机器人的概率。</li>
+                <li><strong>中英双语环境支持</strong>：兼容中英文语言环境下的状态抓取，智能区分“已完成”与“未完成”任务。</li>
+                <li><strong>内嵌可视化面板</strong>：在网页内自动生成悬浮 UI（支持深色模式），实时显示当前搜索进度、倒计时与下一个任务。</li>
+                <li><strong>异常自动容错</strong>：网络中断或搜索分数未增加时，脚本会自动进入“休息模式”并择机重试，最大化保障稳定性。</li>
+            </ul>
+        </section>
+
+        <section id="installation">
+            <h2>📦 使用方式</h2>
+            <h3>第一步：安装脚本管理器</h3>
+            <p>在使用本脚本前，您需要在浏览器中安装 <strong>Tampermonkey</strong> 扩展程序（油猴插件）。</p>
+            <ul>
+                <li>Edge: <a href="https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd" target="_blank">获取 Tampermonkey</a></li>
+                <li>Chrome: <a href="https://chrome.google.com/webstore/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo" target="_blank">获取 Tampermonkey</a></li>
+            </ul>
+            
+            <h3>第二步：安装本脚本</h3>
+            <p>点击页面顶部的“立即安装脚本”按钮，Tampermonkey 会自动弹出安装确认页面，点击<strong>“安装”</strong>即可。</p>
+            
+            <h3>第三步：开始赚取积分</h3>
+            <p>1. 打开浏览器并访问 <a href="https://www.bing.com/" target="_blank">Bing.com</a><br>
+               2. 确保您已登录您的微软账户。<br>
+               3. 页面右下角将出现一个 <strong>Rewards 悬浮球</strong>，点击悬浮球并在面板中点击“▶ 开始执行”即可。</p>
+        </section>
+
+        <section id="risks">
+            <h2>⚠️ 风险与免责条款</h2>
+            
+            <div class="alert alert-warning">
+                <strong>使用风险告知 (Risk Disclosure)</strong>
+                <p>根据 Microsoft Services Agreement，使用自动化程序、脚本、机器人等手段获取 Microsoft Rewards 积分属于<strong>违规行为</strong>。</p>
+                <p>虽然本脚本内置了人工操作模拟、随机延迟等反检测机制以尽可能提高安全性，但<strong>微软仍有能力通过各种手段（如账户行为分析、IP 关联等）侦测自动化行为</strong>。一旦被微软认定为违规，您可能会面临以下后果：</p>
+                <ul>
+                    <li>Rewards 账户被暂时限制或永久封禁（Ban）。</li>
+                    <li>账户内已积累的积分被清零或无法兑换。</li>
+                    <li>部分情形下，甚至可能会牵连主微软账号的部分功能。</li>
+                </ul>
+            </div>
+
+            <div class="alert alert-danger">
+                <strong>免责声明 (Legal Disclaimer)</strong>
+                <p>本脚本及相关代码仅供<strong>前端自动化技术学习与交流之用</strong>。脚本采用 MIT 许可证开源，按“原样”提供，不提供任何明示或暗示的保证。</p>
+                <p><strong>开发者（Author）不对任何人因使用本脚本而导致的任何直接或间接损失负责。</strong>包括但不限于账户封禁、积分丢失、隐私泄露等。</p>
+                <p><strong>当您下载、安装并运行本脚本时，即代表您已经阅读并同意本免责声明，且自愿承担由此带来的一切后果及法律责任。</strong> 如果您不同意上述条款，请立即卸载并停止使用本脚本。</p>
+            </div>
+        </section>
+
+        <footer>
+            <p>Rewards Points Farmer &copy; 2026. Released under the MIT License.</p>
+            <p>Project available on <a href="https://github.com/veegn/rewards-points-farmer" target="_blank">GitHub</a>.</p>
+        </footer>
+    </div>
+</body>
+</html>
