@@ -32,3 +32,11 @@ jobs:
         with:
           files: dist/rewards-points-farmer.user.js
           generate_release_notes: true
+          make_latest: true
+
+      - name: Update latest tag
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -f latest
+          git push -f origin latest
