@@ -460,11 +460,14 @@ export function getDataFromPanel() {
                 const vm = iframeWin.flyoutViewModel;
                 const ss = (vm.flyoutResult && vm.flyoutResult.suggestedSearches) || vm.suggestedSearches;
                 if (ss && ss.suggestedItems) {
-                    const terms = ss.suggestedItems.map((item: any) => item.query).filter((q: any) => q);
-                    if (terms.length > 0) {
-                        store.iframeSearchTerms = [...terms];
-                        iframeTermsFound = true;
-                        console.log('从flyoutViewModel变量找到侧边栏搜索词: ' + terms.length + '个');
+                    const urls = ss.suggestedItems.map((item: any) => item.url).filter((u: any) => u);
+                    if (urls.length > 0) {
+                        urls.forEach((u: string) => {
+                            if (!store.searchState.dailyTasksQueue.includes(u)) {
+                                store.searchState.dailyTasksQueue.push(u);
+                            }
+                        });
+                        console.log('从flyoutViewModel变量找到侧边栏卡片任务链接: ' + urls.length + '个，已加入跳转队列');
                     }
                 }
             }
@@ -492,12 +495,15 @@ export function getDataFromPanel() {
                         const viewModel = JSON.parse(text.substring(braceStart, braceEnd + 1));
                         const ss = (viewModel.flyoutResult && viewModel.flyoutResult.suggestedSearches) || viewModel.suggestedSearches;
                         if (ss && ss.suggestedItems) {
-                            const terms = ss.suggestedItems
-                                .map((item: any) => item.query).filter((q: any) => q);
-                            if (terms.length > 0) {
-                                store.iframeSearchTerms = [...terms];
-                                iframeTermsFound = true;
-                                console.log('从script标签解析找到iframe搜索词: ' + terms.length + '个');
+                            const urls = ss.suggestedItems
+                                .map((item: any) => item.url).filter((u: any) => u);
+                            if (urls.length > 0) {
+                                urls.forEach((u: string) => {
+                                    if (!store.searchState.dailyTasksQueue.includes(u)) {
+                                        store.searchState.dailyTasksQueue.push(u);
+                                    }
+                                });
+                                console.log('从script标签解析找到iframe卡片任务链接: ' + urls.length + '个，已加入跳转队列');
                             }
                         }
                     } catch (parseErr: any) {
@@ -513,15 +519,18 @@ export function getDataFromPanel() {
         if (!iframeTermsFound) {
             const searchTermsContainer = targetDoc.querySelector('.ss_items_wrapper');
             if (searchTermsContainer) {
-                const terms: string[] = [];
-                const spans = searchTermsContainer.querySelectorAll('span');
-                spans.forEach(span => {
-                    if (span.textContent) terms.push(span.textContent);
+                let found = 0;
+                const links = searchTermsContainer.querySelectorAll('a');
+                links.forEach(a => {
+                    const u = a.getAttribute('href');
+                    if (u && !store.searchState.dailyTasksQueue.includes(u)) {
+                        store.searchState.dailyTasksQueue.push(u);
+                        found++;
+                    }
                 });
-                if (terms.length > 0) {
-                    store.iframeSearchTerms = [...terms];
-                    iframeTermsFound = true;
-                    console.log('从DOM找到侧边栏搜索词: ' + terms.length + '个');
+                
+                if (found > 0) {
+                    console.log('从DOM结构中提取侧边栏卡片任务链接: ' + found + '个，已加入跳转队列');
                 }
             }
         }
