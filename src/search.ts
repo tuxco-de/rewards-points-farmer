@@ -2,7 +2,7 @@ import { config } from './config';
 import { store, sleep, getRandomInterval } from './state';
 import { updateStatus, updateCountdown, showCompletionNotification, setSearchButtonState } from './ui';
 import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent, simulateTypingAndSearch } from './dom';
-import { getDataFromPanel, getSearchTermsFromMainDoc, executeDailyTasksAsync, fetchOrganicSearchTerms } from './parser';
+import { getDataFromPanel, getSearchTermsFromMainDoc, executeDailyTasksAsync, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
 import { t } from './i18n';
 
 export async function simulateScrollingAsync() {
@@ -194,13 +194,35 @@ export async function searchLoop() {
             await waitForIframeContent(10000);
             getDataFromPanel();
             getSearchTermsFromMainDoc();
+            
+            let taskClicked = false;
+            if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
+                const nextTaskUrl = store.searchState.dailyTasksQueue[0];
+                taskClicked = await clickTaskCardAsync(nextTaskUrl);
+                
+                if (taskClicked) {
+                    store.searchState.dailyTasksQueue.shift();
+                    if (!store.searchState.attemptedTasks) store.searchState.attemptedTasks = [];
+                    store.searchState.attemptedTasks.push(nextTaskUrl);
+                    store.saveState();
+                }
+            }
+            
             await closeRewardsSidebarAsync();
+            
+            if (taskClicked) {
+                updateStatus(t('status', 'executingPanel'));
+                await countdownAsync(3, 'waiting');
+                continue;
+            }
             
             if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
                 updateStatus(t('status', 'executingPanel'));
                 const nextTaskUrl = store.searchState.dailyTasksQueue.shift();
-                store.saveState();
                 if (nextTaskUrl) {
+                    if (!store.searchState.attemptedTasks) store.searchState.attemptedTasks = [];
+                    store.searchState.attemptedTasks.push(nextTaskUrl);
+                    store.saveState();
                     window.location.href = nextTaskUrl;
                     return;
                 }

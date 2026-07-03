@@ -2,7 +2,7 @@ import { config } from './config';
 import { store, sleep, getRandomInterval } from './state';
 import { createUI, applyCollapseState, applyTheme, updateStatus, showCompletionNotification, setSearchButtonState, updateProgressUI } from './ui';
 import { openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForElement, waitForIframeContent } from './dom';
-import { getDataFromPanel, getSearchTermsFromMainDoc } from './parser';
+import { getDataFromPanel, getSearchTermsFromMainDoc, clickTaskCardAsync } from './parser';
 import { countdownAsync, simulateScrollingAsync, searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch } from './search';
 import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
@@ -39,20 +39,6 @@ function restoreState() {
                 if (!store.isSearching) return;
                 await simulateScrollingAsync();
                 
-                if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
-                    updateStatus(t('status', 'executingPanel'));
-                    await sleep(2000);
-                    const nextTaskUrl = store.searchState.dailyTasksQueue.shift();
-                    
-                    if (nextTaskUrl) {
-                        if (!store.searchState.attemptedTasks) store.searchState.attemptedTasks = [];
-                        store.searchState.attemptedTasks.push(nextTaskUrl);
-                        store.saveState();
-                        window.location.href = nextTaskUrl;
-                        return;
-                    }
-                }
-                
                 if (!store.isSearching) return;
                 updateStatus(t('status', 'checkingProgress'));
                 store.searchState.currentAction = 'checking';
@@ -61,7 +47,27 @@ function restoreState() {
                     await waitForIframeContent(10000);
                     getDataFromPanel();
                     getSearchTermsFromMainDoc();
+                    
+                    let taskClicked = false;
+                    if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
+                        const nextTaskUrl = store.searchState.dailyTasksQueue[0];
+                        taskClicked = await clickTaskCardAsync(nextTaskUrl);
+                        
+                        if (taskClicked) {
+                            store.searchState.dailyTasksQueue.shift();
+                            if (!store.searchState.attemptedTasks) store.searchState.attemptedTasks = [];
+                            store.searchState.attemptedTasks.push(nextTaskUrl);
+                            store.saveState();
+                        }
+                    }
+                    
                     await closeRewardsSidebarAsync();
+                    
+                    if (taskClicked) {
+                        updateStatus(t('status', 'executingPanel'));
+                        setTimeout(searchLoop, 3000);
+                        return;
+                    }
                     
                     if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
                         updateStatus(t('status', 'executingPanel'));

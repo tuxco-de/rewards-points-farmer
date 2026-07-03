@@ -589,3 +589,40 @@ export async function executeDailyTasksAsync() {
         console.log('执行每日任务出错', e);
     }
 }
+
+export async function clickTaskCardAsync(url: string): Promise<boolean> {
+    try {
+        const iframe = document.querySelector('iframe[src*="rewards/panelflyout"], iframe#b_rwFlyout, iframe.b_rwFlyout') as HTMLIFrameElement;
+        if (!iframe) return false;
+        
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (!iframeDoc) return false;
+        
+        let linkElem = iframeDoc.querySelector(`a[href="${url}"]`);
+        if (!linkElem) {
+            const urlPath = url.split('?')[0];
+            linkElem = iframeDoc.querySelector(`a[href^="${urlPath}"]`);
+        }
+        
+        if (linkElem) {
+            const targetElem = linkElem as HTMLElement;
+            console.log(`[RewardsHelper] 找到任务卡片并模拟点击: ${url}`);
+            
+            const rect = targetElem.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                const targetX = rect.left + rect.width / 2;
+                const targetY = rect.top + rect.height / 2;
+                targetElem.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: targetX, clientY: targetY }));
+                await new Promise(r => setTimeout(r, 100));
+                targetElem.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: targetX, clientY: targetY }));
+                await new Promise(r => setTimeout(r, 50));
+            }
+            
+            targetElem.click();
+            return true;
+        }
+    } catch (e) {
+        console.warn('[RewardsHelper] 模拟点击卡片时出错:', e);
+    }
+    return false;
+}
