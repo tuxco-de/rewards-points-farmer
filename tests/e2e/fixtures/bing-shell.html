@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bing shell fixture</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+      }
+
+      #b_header {
+        align-items: center;
+        border-bottom: 1px solid #ddd;
+        display: flex;
+        justify-content: flex-end;
+        min-height: 56px;
+        padding: 0 24px;
+      }
+
+      #content {
+        padding: 24px;
+      }
+
+      #b_rwFlyout {
+        border: 0;
+        height: 360px;
+        position: absolute;
+        right: 24px;
+        top: 64px;
+        width: 360px;
+      }
+    </style>
+  </head>
+  <body>
+    <header id="b_header">
+      <div id="id_rh">
+        <button id="rewards-badge" class="points-container" type="button">Rewards 123</button>
+      </div>
+    </header>
+
+    <main id="content">
+      <form id="sb_form">
+        <input id="sb_form_q" name="q" value="" />
+        <button id="sb_form_go" type="submit">Search</button>
+      </form>
+
+      <section class="b_vList b_divsec">
+        <a href="/search?q=weather">weather forecast</a>
+        <a href="/search?q=technology">technology news</a>
+      </section>
+
+      <article class="b_algo">Example result</article>
+    </main>
+
+    <script>
+      const flyoutMarkup = `
+        <!doctype html>
+        <html>
+          <body>
+            <section aria-label="Rewards panel">
+              <div>
+                <span>PC search progress</span>
+                <span>0 / 90</span>
+              </div>
+
+              <a class="rw-card" aria-label="Daily poll - 10 points" href="/search?q=daily%20poll">
+                <span class="point" aria-label="10 points">+10</span>
+                <span>Daily poll</span>
+              </a>
+
+              <a class="rw-card" aria-label="NASA Artemis mission - 10 points" href="/rewards/task/nasa-artemis">
+                <span class="point" aria-label="10 points">+10</span>
+                <span>NASA Artemis mission</span>
+              </a>
+            </section>
+          </body>
+        </html>`;
+
+      document.getElementById('rewards-badge').addEventListener('click', () => {
+        const existing = document.getElementById('b_rwFlyout');
+        if (existing) {
+          existing.remove();
+          return;
+        }
+
+        const iframe = document.createElement('iframe');
+        iframe.id = 'b_rwFlyout';
+        iframe.srcdoc = flyoutMarkup;
+        document.body.appendChild(iframe);
+      });
+
+      document.getElementById('sb_form').addEventListener('submit', event => {
+        event.preventDefault();
+        document.body.dataset.lastQuery = document.getElementById('sb_form_q').value;
+      });
+    </script>
+  </body>
+</html>

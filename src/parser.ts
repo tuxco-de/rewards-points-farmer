@@ -1,5 +1,5 @@
 import { config } from './config';
-import { store } from './state';
+import { DailyTask, getDailyTaskUrl, removeDailyTask, store, upsertDailyTask } from './state';
 import { updateDailyTasksUI, updateProgressUI } from './ui';
 import { t } from './i18n';
 
@@ -184,6 +184,147 @@ function getCardCompletionStatus(card: Element): string {
     }
 }
 
+function getReactPromotionTitle(card: Element): string {
+    try {
+        for (const key of Object.keys(card)) {
+            if (key.startsWith('__reactEventHandlers$') || key.startsWith('__reactProps$') || key.startsWith('__reactFiber$')) {
+                const reactObj = (card as any)[key];
+
+                const findTitle = (obj: any, depth: number): string => {
+                    if (depth > 6 || !obj || typeof obj !== 'object') return '';
+                    if (obj.promotion && obj.promotion.title && typeof obj.promotion.title === 'string') {
+                        return obj.promotion.title;
+                    }
+                    for (const k of Object.keys(obj)) {
+                        if (k === 'children' || k === 'props' || k === 'promotion' || !isNaN(Number(k))) {
+                            try {
+                                const res = findTitle(obj[k], depth + 1);
+                                if (res) return res;
+                            } catch (e) {}
+                        }
+                    }
+                    return '';
+                };
+
+                const title = findTitle(reactObj, 0);
+                if (title) return title;
+            }
+        }
+    } catch (e) {
+        console.log('获取React属性出错', e);
+    }
+    return '';
+}
+
+function cleanupTaskText(value: string): string {
+    return value
+        .replace(/\s+/g, ' ')
+        .replace(/\b(?:not completed|is completed|completed|points?|pts|icon)\b/gi, ' ')
+        .replace(/未完成|已完成|积分|添加/g, ' ')
+        .replace(/\+\s*\d+/g, ' ')
+        .trim();
+}
+
+function getHrefQuery(href: string | null): string {
+    if (!href) return '';
+    try {
+        const parsed = new URL(href, window.location.origin);
+        return (parsed.searchParams.get('q') || '').trim();
+    } catch {
+        return '';
+    }
+}
+
+function getUniqueTaskCandidates(candidates: string[]): string[] {
+    const result: string[] = [];
+    candidates.forEach(candidate => {
+        const cleaned = cleanupTaskText(candidate);
+        if (cleaned.length >= 2 && cleaned.length <= 80 && !/^\d+$/.test(cleaned) && !result.some(v => v.toLowerCase() === cleaned.toLowerCase())) {
+            result.push(cleaned);
+        }
+    });
+    return result;
+}
+
+function getCardDisplayName(card: Element, idx: number): string {
+    const ariaLabel = card.getAttribute('aria-label') || '';
+    const text = card.textContent || '';
+    let name = getReactPromotionTitle(card);
+
+    if (!name && ariaLabel) {
+        if (ariaLabel.includes(' - ')) {
+            name = ariaLabel.split(' - ')[0];
+        } else {
+            name = ariaLabel;
+        }
+    }
+
+    if (!name) {
+        const titleElem = card.querySelector('h3, h4, .title, .rw-card-title, .promo_title, .card-title, div[class*="title"], img[alt]');
+        if (titleElem && titleElem.tagName.toLowerCase() === 'img') {
+            name = titleElem.getAttribute('alt') || '';
+        } else if (titleElem && titleElem.textContent?.trim()) {
+            name = titleElem.textContent.trim();
+        }
+    }
+
+    if (!name) {
+        const lines = text.split('\n').map(l => l.trim()).filter(l => l && !/^\+?\s*\d+\s*(分|points?)?$/i.test(l));
+        name = lines[0] || t('parser', 'taskName', idx + 1);
+    }
+
+    name = cleanupTaskText(name);
+    if (/^\+?\s*\d+\s*(分|points?)?$/i.test(name) || !name) name = t('parser', 'taskName', idx + 1);
+    return name;
+}
+
+function createDailyTaskFromCard(card: Element, idx: number, status: string): DailyTask | null {
+    const linkElem = card.tagName.toLowerCase() === 'a' ? card : card.querySelector('a');
+    const href = linkElem ? linkElem.getAttribute('href') : '';
+    if (!href) return null;
+
+    const ariaLabel = card.getAttribute('aria-label') || '';
+    const title = getCardDisplayName(card, idx);
+    const imgAlt = Array.from(card.querySelectorAll('img[alt]')).map(img => img.getAttribute('alt') || '');
+    const textLines = (card.textContent || '')
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l && !/^\+?\s*\d+\s*(分|points?)?$/i.test(l));
+    const queryCandidates = getUniqueTaskCandidates([
+        getHrefQuery(href),
+        title,
+        ariaLabel,
+        ...imgAlt,
+        ...textLines
+    ]);
+
+    return {
+        url: href,
+        title,
+        status: status === '已完成' ? '已完成' : '未完成',
+        points: getCardPoints(card),
+        queryCandidates,
+        attempts: 0,
+        source: 'card'
+    };
+}
+
+function createDailyTaskFromUrl(url: string, title = '', source = 'suggested'): DailyTask | null {
+    const query = getHrefQuery(url);
+    const queryCandidates = getUniqueTaskCandidates([query, title, url]);
+    const taskTitle = cleanupTaskText(title || query || url);
+    if (!url || !taskTitle) return null;
+    return {
+        url,
+        title: taskTitle,
+        status: '未完成',
+        points: 0,
+        queryCandidates,
+        attempts: 0,
+        source
+    };
+}
+
 export function getDataFromPanel() {
     let targetDoc = document;
     let isIframe = false;
@@ -221,86 +362,22 @@ export function getDataFromPanel() {
             console.log('[RewardsHelper] 全局扫描找到任务卡片数量:', finalCards.length);
 
             finalCards.forEach((div, idx) => {
-                const ariaLabel = div.getAttribute('aria-label') || '';
-                const text = div.textContent || '';
-                
-                let name = '';
-
-                try {
-                    for (const key of Object.keys(div)) {
-                        if (key.startsWith('__reactEventHandlers$') || key.startsWith('__reactProps$') || key.startsWith('__reactFiber$')) {
-                            const reactObj = (div as any)[key];
-                            
-                            const findTitle = (obj: any, depth: number): string => {
-                                if (depth > 6 || !obj || typeof obj !== 'object') return '';
-                                if (obj.promotion && obj.promotion.title && typeof obj.promotion.title === 'string') {
-                                    return obj.promotion.title;
-                                }
-                                for (const k of Object.keys(obj)) {
-                                    if (k === 'children' || k === 'props' || k === 'promotion' || !isNaN(Number(k))) {
-                                        try {
-                                            const res = findTitle(obj[k], depth + 1);
-                                            if (res) return res;
-                                        } catch (e) {}
-                                    }
-                                }
-                                return '';
-                            };
-                            const title = findTitle(reactObj, 0);
-                            if (title) {
-                                name = title;
-                                break;
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.log('获取React属性出错', e);
-                }
-
-                if (!name && ariaLabel) {
-                    if (ariaLabel.includes(' - ')) {
-                        name = ariaLabel.split(' - ')[0];
-                    } else {
-                        name = ariaLabel;
-                    }
-                }
-                
-                if (!name) {
-                    const titleElem = div.querySelector('h3, h4, .title, .rw-card-title, .promo_title, .card-title, div[class*="title"], img[alt]');
-                    if (titleElem && titleElem.tagName.toLowerCase() === 'img') {
-                        name = titleElem.getAttribute('alt') || '';
-                    } else if (titleElem && titleElem.textContent?.trim()) {
-                        name = titleElem.textContent.trim();
-                    }
-                    
-                    if (!name) {
-                        const lines = text.split('\n').map(l => l.trim()).filter(l => l && !/^\+?\s*\d+\s*(分|points?)?$/i.test(l));
-                        if (lines.length > 0) {
-                            name = lines[0];
-                        } else {
-                            name = t('parser', 'taskName', idx + 1);
-                        }
-                    }
-                }
-
                 const status = getCardCompletionStatus(div);
                 console.log(`[RewardsHelper] 状态推断: ${status}`);
 
-                name = name.replace(/icon\s*$/i, '').trim();
-                if (/^\+?\s*\d+\s*(分|points?)?$/i.test(name)) name = t('parser', 'taskName', idx + 1);
+                const task = createDailyTaskFromCard(div, idx, status);
+                let name = task?.title || getCardDisplayName(div, idx);
                 if (name.length > 25) name = name.substring(0, 25) + '...';
                 
                 console.log(`[RewardsHelper] 最终结果 -> 任务名: "${name}", 状态: "${status}"`);
                 
-                if (status === '未完成') {
-                    const linkElem = div.tagName.toLowerCase() === 'a' ? div : div.querySelector('a');
-                    const href = linkElem ? linkElem.getAttribute('href') : null;
-                    if (href && !store.searchState.dailyTasksQueue.includes(href)) {
-                        if (!store.searchState.attemptedTasks || !store.searchState.attemptedTasks.includes(href)) {
-                            store.searchState.dailyTasksQueue.push(href);
-                        } else {
-                            console.log(`[RewardsHelper] 任务 "${name}" 已尝试过但未完成，跳过以避免死循环`);
+                if (task) {
+                    if (status === '未完成') {
+                        if (!upsertDailyTask(task)) {
+                            console.log(`[RewardsHelper] 任务 "${name}" 已在队列或已跳过`);
                         }
+                    } else {
+                        removeDailyTask(task);
                     }
                 }
                 
@@ -462,10 +539,9 @@ export function getDataFromPanel() {
                 if (ss && ss.suggestedItems) {
                     const urls = ss.suggestedItems.map((item: any) => item.url).filter((u: any) => u);
                     if (urls.length > 0) {
-                        urls.forEach((u: string) => {
-                            if (!store.searchState.dailyTasksQueue.includes(u)) {
-                                store.searchState.dailyTasksQueue.push(u);
-                            }
+                        ss.suggestedItems.forEach((item: any) => {
+                            const task = createDailyTaskFromUrl(item.url, item.title || item.text || '', 'flyoutViewModel');
+                            if (task) upsertDailyTask(task);
                         });
                         console.log('从flyoutViewModel变量找到侧边栏卡片任务链接: ' + urls.length + '个，已加入跳转队列');
                     }
@@ -498,10 +574,9 @@ export function getDataFromPanel() {
                             const urls = ss.suggestedItems
                                 .map((item: any) => item.url).filter((u: any) => u);
                             if (urls.length > 0) {
-                                urls.forEach((u: string) => {
-                                    if (!store.searchState.dailyTasksQueue.includes(u)) {
-                                        store.searchState.dailyTasksQueue.push(u);
-                                    }
+                                ss.suggestedItems.forEach((item: any) => {
+                                    const task = createDailyTaskFromUrl(item.url, item.title || item.text || '', 'scriptViewModel');
+                                    if (task) upsertDailyTask(task);
                                 });
                                 console.log('从script标签解析找到iframe卡片任务链接: ' + urls.length + '个，已加入跳转队列');
                             }
@@ -523,8 +598,8 @@ export function getDataFromPanel() {
                 const links = searchTermsContainer.querySelectorAll('a');
                 links.forEach(a => {
                     const u = a.getAttribute('href');
-                    if (u && !store.searchState.dailyTasksQueue.includes(u)) {
-                        store.searchState.dailyTasksQueue.push(u);
+                    const task = u ? createDailyTaskFromUrl(u, a.textContent || '', 'domSearchTerms') : null;
+                    if (task && upsertDailyTask(task)) {
                         found++;
                     }
                 });
@@ -559,7 +634,7 @@ export function getDataFromPanel() {
 
 export async function executeDailyTasksAsync() {
     try {
-        const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+        const iframe = document.querySelector('iframe[src*="rewards/panelflyout"], iframe#b_rwFlyout, iframe.b_rwFlyout') as HTMLIFrameElement;
         if (!iframe) return;
         const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
         if (!iframeDoc) return;
@@ -572,12 +647,12 @@ export async function executeDailyTasksAsync() {
             const div = finalCards[i];
             const status = getCardCompletionStatus(div);
 
-            if (status === '未完成') {
-                const linkElem = div.tagName.toLowerCase() === 'a' ? div : div.querySelector('a');
-                const href = linkElem ? linkElem.getAttribute('href') : null;
-                if (href && !store.searchState.dailyTasksQueue.includes(href)) {
-                    store.searchState.dailyTasksQueue.push(href);
+            const task = createDailyTaskFromCard(div, i, status);
+            if (task) {
+                if (status === '未完成' && upsertDailyTask(task)) {
                     hasNewTasks = true;
+                } else if (status === '已完成') {
+                    removeDailyTask(task);
                 }
             }
         }
@@ -590,35 +665,68 @@ export async function executeDailyTasksAsync() {
     }
 }
 
-export async function clickTaskCardAsync(url: string): Promise<boolean> {
+function hrefMatchesTask(href: string | null, taskUrl: string): boolean {
+    if (!href || !taskUrl) return false;
+    if (href === taskUrl) return true;
     try {
+        const hrefUrl = new URL(href, window.location.origin);
+        const taskParsedUrl = new URL(taskUrl, window.location.origin);
+        return hrefUrl.pathname === taskParsedUrl.pathname && (!taskParsedUrl.search || hrefUrl.search === taskParsedUrl.search);
+    } catch {
+        return href.split('?')[0] === taskUrl.split('?')[0];
+    }
+}
+
+export async function clickTaskCardAsync(taskOrUrl: DailyTask | string): Promise<boolean> {
+    try {
+        const url = getDailyTaskUrl(taskOrUrl);
         const iframe = document.querySelector('iframe[src*="rewards/panelflyout"], iframe#b_rwFlyout, iframe.b_rwFlyout') as HTMLIFrameElement;
         if (!iframe) return false;
         
         const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
         if (!iframeDoc) return false;
-        
-        let linkElem = iframeDoc.querySelector(`a[href="${url}"]`);
-        if (!linkElem) {
-            const urlPath = url.split('?')[0];
-            linkElem = iframeDoc.querySelector(`a[href^="${urlPath}"]`);
-        }
-        
+
+        const linkElem = Array.from(iframeDoc.querySelectorAll('a')).find(a => hrefMatchesTask(a.getAttribute('href'), url));
+
         if (linkElem) {
             const targetElem = linkElem as HTMLElement;
             console.log(`[RewardsHelper] 找到任务卡片并模拟点击: ${url}`);
-            
+
             const rect = targetElem.getBoundingClientRect();
             if (rect.width > 0 && rect.height > 0) {
                 const targetX = rect.left + rect.width / 2;
                 const targetY = rect.top + rect.height / 2;
-                targetElem.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: targetX, clientY: targetY }));
-                await new Promise(r => setTimeout(r, 100));
-                targetElem.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: targetX, clientY: targetY }));
+                const eventOptions = { bubbles: true, cancelable: true, clientX: targetX, clientY: targetY, view: iframe.contentWindow || window };
+
+                let clickTarget: Element = targetElem;
+                if (iframeDoc.elementFromPoint) {
+                    const elAtPoint = iframeDoc.elementFromPoint(targetX, targetY);
+                    if (elAtPoint && targetElem.contains(elAtPoint)) {
+                        clickTarget = elAtPoint;
+                    }
+                }
+
+                clickTarget.dispatchEvent(new MouseEvent('mouseover', eventOptions));
+                clickTarget.dispatchEvent(new MouseEvent('mousemove', eventOptions));
                 await new Promise(r => setTimeout(r, 50));
+
+                clickTarget.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+                await new Promise(r => setTimeout(r, 50));
+
+                clickTarget.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+                await new Promise(r => setTimeout(r, 50));
+
+                clickTarget.dispatchEvent(new MouseEvent('click', eventOptions));
+
+                // Trigger native click as well to ensure default navigation happens
+                // if the custom event is not handled by the page script.
+                if (clickTarget !== targetElem) {
+                    (clickTarget as HTMLElement).click?.();
+                }
+                targetElem.click();
+            } else {
+                targetElem.click();
             }
-            
-            targetElem.click();
             return true;
         }
     } catch (e) {

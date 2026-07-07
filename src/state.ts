@@ -2,6 +2,153 @@ import { config } from './config';
 
 const STORAGE_KEY = 'bing_rewards_auto_searcher_state';
 const CONFIG_KEY = 'bing_rewards_config';
+export const MAX_DAILY_TASK_ATTEMPTS = 4;
+
+export type DailyTaskStatus = '未完成' | '已完成';
+
+export interface DailyTask {
+    url: string;
+    title: string;
+    status: DailyTaskStatus;
+    points: number;
+    queryCandidates: string[];
+    attempts: number;
+    lastAttemptAt?: number;
+    source?: string;
+}
+
+function extractQueryFromUrl(url: string): string {
+    try {
+        const parsed = new URL(url, window.location.origin);
+        return (parsed.searchParams.get('q') || '').trim();
+    } catch {
+        return '';
+    }
+}
+
+function normalizeCandidate(candidate: string): string {
+    return candidate
+        .replace(/\s+/g, ' ')
+        .replace(/\b(?:not completed|completed|points?|pts)\b/gi, ' ')
+        .replace(/未完成|已完成|积分|添加/g, ' ')
+        .replace(/\+\s*\d+/g, ' ')
+        .trim();
+}
+
+function uniqueCandidates(candidates: string[]): string[] {
+    const result: string[] = [];
+    candidates.forEach(candidate => {
+        const cleaned = normalizeCandidate(candidate);
+        if (cleaned.length >= 2 && cleaned.length <= 80 && !result.some(v => v.toLowerCase() === cleaned.toLowerCase())) {
+            result.push(cleaned);
+        }
+    });
+    return result;
+}
+
+export function normalizeDailyTaskEntry(entry: any): DailyTask | null {
+    if (!entry) return null;
+    if (typeof entry === 'string') {
+        const query = extractQueryFromUrl(entry);
+        return {
+            url: entry,
+            title: query || entry,
+            status: '未完成',
+            points: 0,
+            queryCandidates: uniqueCandidates([query, entry]),
+            attempts: 0,
+            source: 'legacy'
+        };
+    }
+
+    if (typeof entry !== 'object') return null;
+    const url = String(entry.url || '').trim();
+    const title = normalizeCandidate(String(entry.title || extractQueryFromUrl(url) || url));
+    if (!url && !title) return null;
+
+    return {
+        url,
+        title,
+        status: entry.status === '已完成' ? '已完成' : '未完成',
+        points: Number(entry.points || 0),
+        queryCandidates: uniqueCandidates([
+            ...(Array.isArray(entry.queryCandidates) ? entry.queryCandidates : []),
+            title,
+            extractQueryFromUrl(url)
+        ]),
+        attempts: Math.max(0, Number(entry.attempts || 0)),
+        lastAttemptAt: Number(entry.lastAttemptAt || 0) || undefined,
+        source: entry.source ? String(entry.source) : undefined
+    };
+}
+
+export function getDailyTaskKey(task: DailyTask | string): string {
+    if (typeof task === 'string') return task;
+    return task.url || task.title;
+}
+
+export function getDailyTaskUrl(task: DailyTask | string): string {
+    return typeof task === 'string' ? task : task.url;
+}
+
+export function normalizeDailyTaskQueue(entries: any[]): DailyTask[] {
+    const queue: DailyTask[] = [];
+    (entries || []).forEach(entry => {
+        const task = normalizeDailyTaskEntry(entry);
+        if (!task) return;
+        const key = getDailyTaskKey(task);
+        if (!key || queue.some(existing => getDailyTaskKey(existing) === key)) return;
+        queue.push(task);
+    });
+    return queue;
+}
+
+export function upsertDailyTask(taskInput: DailyTask | string): boolean {
+    const task = normalizeDailyTaskEntry(taskInput);
+    if (!task || task.status === '已完成') return false;
+    const key = getDailyTaskKey(task);
+    if (!key || store.searchState.attemptedTasks.includes(key)) return false;
+
+    const existing = store.searchState.dailyTasksQueue.find(item => getDailyTaskKey(item) === key);
+    if (existing) {
+        existing.title = task.title || existing.title;
+        existing.status = task.status;
+        existing.points = task.points || existing.points;
+        existing.queryCandidates = uniqueCandidates([...existing.queryCandidates, ...task.queryCandidates]);
+        existing.source = task.source || existing.source;
+        return false;
+    }
+
+    store.searchState.dailyTasksQueue.push(task);
+    return true;
+}
+
+export function removeDailyTask(taskInput: DailyTask | string) {
+    const key = getDailyTaskKey(taskInput);
+    store.searchState.dailyTasksQueue = store.searchState.dailyTasksQueue.filter(task => getDailyTaskKey(task) !== key);
+}
+
+export function recordDailyTaskAttempt(taskInput: DailyTask | string): DailyTask | null {
+    const key = getDailyTaskKey(taskInput);
+    const task = store.searchState.dailyTasksQueue.find(item => getDailyTaskKey(item) === key) || normalizeDailyTaskEntry(taskInput);
+    if (!task) return null;
+    task.attempts += 1;
+    task.lastAttemptAt = Date.now();
+    return task;
+}
+
+export function markDailyTaskSkipped(taskInput: DailyTask | string) {
+    const key = getDailyTaskKey(taskInput);
+    if (key && !store.searchState.attemptedTasks.includes(key)) {
+        store.searchState.attemptedTasks.push(key);
+    }
+    removeDailyTask(taskInput);
+}
+
+export function getDailyTaskSearchTerm(task: DailyTask): string {
+    const index = Math.max(0, Math.min(task.attempts - 1, task.queryCandidates.length - 1));
+    return task.queryCandidates[index] || task.title;
+}
 
 class StateStore {
     isSearching: boolean = false;
@@ -47,7 +194,7 @@ class StateStore {
         countdown: 0,
         needRest: false,
         isCollapsed: true,
-        dailyTasksQueue: [] as string[],
+        dailyTasksQueue: [] as DailyTask[],
         attemptedTasks: [] as string[]
     };
 
@@ -60,6 +207,7 @@ class StateStore {
             lastActivityTime: Date.now(),
             mainPageSearchTerms: this.mainPageSearchTerms,
             iframeSearchTerms: this.iframeSearchTerms,
+            dailyTasksData: this.dailyTasksData,
             dailyTasksQueue: this.searchState.dailyTasksQueue,
             attemptedTasks: this.searchState.attemptedTasks,
             timestamp: Date.now()
@@ -88,10 +236,13 @@ class StateStore {
 
                 console.log('从本地存储加载状态:', state);
                 if (state.dailyTasksQueue) {
-                    this.searchState.dailyTasksQueue = state.dailyTasksQueue;
+                    this.searchState.dailyTasksQueue = normalizeDailyTaskQueue(state.dailyTasksQueue);
                 }
                 if (state.attemptedTasks) {
                     this.searchState.attemptedTasks = state.attemptedTasks;
+                }
+                if (state.dailyTasksData) {
+                    this.dailyTasksData = state.dailyTasksData;
                 }
                 return state;
             }

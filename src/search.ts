@@ -1,5 +1,5 @@
 import { config } from './config';
-import { store, sleep, getRandomInterval } from './state';
+import { DailyTask, getDailyTaskSearchTerm, markDailyTaskSkipped, MAX_DAILY_TASK_ATTEMPTS, recordDailyTaskAttempt, store, sleep, getRandomInterval } from './state';
 import { updateStatus, updateCountdown, showCompletionNotification, setSearchButtonState } from './ui';
 import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent, simulateTypingAndSearch } from './dom';
 import { getDataFromPanel, getSearchTermsFromMainDoc, executeDailyTasksAsync, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
@@ -74,10 +74,21 @@ export async function ensureFallbackSearchTerms() {
     }
 }
 
-export function getSearchTerm() {
+function getActiveDailyTaskForSearch(): DailyTask | null {
+    const task = store.searchState.dailyTasksQueue[0];
+    if (!task || task.attempts <= 0 || task.queryCandidates.length === 0) return null;
+    return task;
+}
+
+export function getSearchTerm(task: DailyTask | null = getActiveDailyTaskForSearch()) {
     let term = '';
+
+    if (task && task.queryCandidates.length > 0) {
+        term = getDailyTaskSearchTerm(task);
+        console.log(`使用卡片任务相关词汇: ${term}`);
+    }
     
-    if (store.iframeSearchTerms && store.iframeSearchTerms.length > 0) {
+    if (!term && store.iframeSearchTerms && store.iframeSearchTerms.length > 0) {
         let attempts = 0;
         while (attempts < store.iframeSearchTerms.length) {
             const index = Math.floor(Math.random() * store.iframeSearchTerms.length);
@@ -139,8 +150,46 @@ export function getSearchTerm() {
         console.log(`使用随机生成词汇: ${term}`);
     }
 
-    store.usedSearchTerms.push(term);
+    if (!store.usedSearchTerms.includes(term)) {
+        store.usedSearchTerms.push(term);
+    }
     return term;
+}
+
+async function runQueuedDailyTaskFromOpenPanel(): Promise<'clicked' | 'search' | 'skipped' | 'none'> {
+    const task = store.searchState.dailyTasksQueue[0];
+    if (!task) return 'none';
+
+    if (task.attempts >= MAX_DAILY_TASK_ATTEMPTS) {
+        console.log(`[RewardsHelper] 任务 "${task.title}" 已达到最大尝试次数，跳过`);
+        markDailyTaskSkipped(task);
+        store.saveState();
+        return 'skipped';
+    }
+
+    if (task.attempts === 0 && task.url) {
+        const taskClicked = await clickTaskCardAsync(task);
+        if (taskClicked) {
+            recordDailyTaskAttempt(task);
+            store.saveState();
+            return 'clicked';
+        }
+    }
+
+    if (task.queryCandidates.length > 0) {
+        return 'search';
+    }
+
+    if (task.url) {
+        recordDailyTaskAttempt(task);
+        store.saveState();
+        window.location.href = task.url;
+        return 'clicked';
+    }
+
+    markDailyTaskSkipped(task);
+    store.saveState();
+    return 'skipped';
 }
 
 export function stopAutomatedSearch() {
@@ -164,11 +213,17 @@ export function stopAutomatedSearch() {
     updateStatus(t('status', 'searchStopped'));
 }
 
-export async function performSearch() {
+export async function performSearch(task?: DailyTask | null) {
     if (!store.isSearching) return;
     
-    await ensureFallbackSearchTerms();
-    const searchTerm = getSearchTerm();
+    const activeTask = task || getActiveDailyTaskForSearch();
+    if (!activeTask) {
+        await ensureFallbackSearchTerms();
+    }
+    const searchTerm = getSearchTerm(activeTask);
+    if (activeTask) {
+        recordDailyTaskAttempt(activeTask);
+    }
     
     updateStatus(t('status', 'searching', searchTerm));
     store.saveState();
@@ -195,40 +250,32 @@ export async function searchLoop() {
             getDataFromPanel();
             getSearchTermsFromMainDoc();
             
-            let taskClicked = false;
+            let queuedTaskAction: 'clicked' | 'search' | 'skipped' | 'none' = 'none';
             if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
-                const nextTaskUrl = store.searchState.dailyTasksQueue[0];
-                taskClicked = await clickTaskCardAsync(nextTaskUrl);
-                
-                if (taskClicked) {
-                    store.searchState.dailyTasksQueue.shift();
-                    if (!store.searchState.attemptedTasks) store.searchState.attemptedTasks = [];
-                    store.searchState.attemptedTasks.push(nextTaskUrl);
-                    store.saveState();
-                }
+                queuedTaskAction = await runQueuedDailyTaskFromOpenPanel();
             }
             
             await closeRewardsSidebarAsync();
             
-            if (taskClicked) {
+            if (queuedTaskAction === 'clicked') {
                 updateStatus(t('status', 'executingPanel'));
                 await countdownAsync(3, 'waiting');
                 continue;
             }
-            
-            if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
+
+            if (queuedTaskAction === 'search') {
                 updateStatus(t('status', 'executingPanel'));
-                const nextTaskUrl = store.searchState.dailyTasksQueue.shift();
-                if (nextTaskUrl) {
-                    if (!store.searchState.attemptedTasks) store.searchState.attemptedTasks = [];
-                    store.searchState.attemptedTasks.push(nextTaskUrl);
-                    store.saveState();
-                    window.location.href = nextTaskUrl;
-                    return;
-                }
+                await countdownAsync(2, 'waiting');
+                performSearch(store.searchState.dailyTasksQueue[0]);
+                return;
+            }
+
+            if (queuedTaskAction === 'skipped') {
+                continue;
             }
             
-            if (store.currentProgress.completed) {
+            const hasUnfinishedDailyTasks = store.dailyTasksData && store.dailyTasksData.some(t => t.status === '未完成');
+            if (store.currentProgress.completed && !hasUnfinishedDailyTasks) {
                 showCompletionNotification();
                 updateStatus(t('status', 'allCompleted'));
                 stopAutomatedSearch();
@@ -263,7 +310,8 @@ export async function searchLoop() {
 }
 
 export async function startAutomatedSearch() {
-    if (store.currentProgress.completed) {
+    const hasUnfinishedTasks = store.dailyTasksData && store.dailyTasksData.some(t => t.status === '未完成');
+    if (store.currentProgress.completed && !hasUnfinishedTasks) {
         updateStatus(t('status', 'alreadyCompleted'));
         return;
     }
@@ -279,14 +327,6 @@ export async function startAutomatedSearch() {
     store.saveState();
     
     await executeDailyTasksAsync();
-    
-    if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
-        updateStatus(t('status', 'executingPanel'));
-        const nextTaskUrl = store.searchState.dailyTasksQueue.shift();
-        store.saveState();
-        if (nextTaskUrl) window.location.href = nextTaskUrl;
-        return;
-    }
     
     searchLoop();
 }

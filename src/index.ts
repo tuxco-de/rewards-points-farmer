@@ -2,8 +2,8 @@ import { config } from './config';
 import { store, sleep, getRandomInterval } from './state';
 import { createUI, applyCollapseState, applyTheme, updateStatus, showCompletionNotification, setSearchButtonState, updateProgressUI } from './ui';
 import { openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForElement, waitForIframeContent } from './dom';
-import { getDataFromPanel, getSearchTermsFromMainDoc, clickTaskCardAsync } from './parser';
-import { countdownAsync, simulateScrollingAsync, searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch } from './search';
+import { getDataFromPanel, getSearchTermsFromMainDoc } from './parser';
+import { countdownAsync, simulateScrollingAsync, searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm } from './search';
 import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
 
@@ -13,6 +13,7 @@ declare global {
         stopRewardsTask: () => void;
         __e2e_performSearch: () => Promise<void>;
         __e2e_simulateTypingAndSearch: (term: string) => Promise<boolean>;
+        __e2e_getSearchTerm: () => string;
     }
 }
 
@@ -31,7 +32,8 @@ function restoreState() {
         updateStatus(t('status', 'detectedPrev'));
 
         setTimeout(async () => {
-            if (!store.currentProgress.completed) {
+            const hasUnfinishedTasks = store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0;
+            if (!store.currentProgress.completed || hasUnfinishedTasks) {
                 console.log('恢复搜索状态，继续之前的搜索任务');
                 
                 setSearchButtonState('searching');
@@ -48,41 +50,16 @@ function restoreState() {
                     getDataFromPanel();
                     getSearchTermsFromMainDoc();
                     
-                    let taskClicked = false;
-                    if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
-                        const nextTaskUrl = store.searchState.dailyTasksQueue[0];
-                        taskClicked = await clickTaskCardAsync(nextTaskUrl);
-                        
-                        if (taskClicked) {
-                            store.searchState.dailyTasksQueue.shift();
-                            if (!store.searchState.attemptedTasks) store.searchState.attemptedTasks = [];
-                            store.searchState.attemptedTasks.push(nextTaskUrl);
-                            store.saveState();
-                        }
-                    }
-                    
                     await closeRewardsSidebarAsync();
                     
-                    if (taskClicked) {
+                    if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
                         updateStatus(t('status', 'executingPanel'));
-                        setTimeout(searchLoop, 3000);
+                        setTimeout(searchLoop, 1000);
                         return;
                     }
                     
-                    if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
-                        updateStatus(t('status', 'executingPanel'));
-                        const nextTaskUrl = store.searchState.dailyTasksQueue.shift();
-                        
-                        if (nextTaskUrl) {
-                            if (!store.searchState.attemptedTasks) store.searchState.attemptedTasks = [];
-                            store.searchState.attemptedTasks.push(nextTaskUrl);
-                            store.saveState();
-                            window.location.href = nextTaskUrl;
-                            return;
-                        }
-                    }
-                    
-                    if (store.currentProgress.completed) {
+                    const hasUnfinishedDailyTasks = store.dailyTasksData && store.dailyTasksData.some(t => t.status === '未完成');
+                    if (store.currentProgress.completed && !hasUnfinishedDailyTasks) {
                         showCompletionNotification();
                         updateStatus(t('status', 'allCompleted'));
                         stopAutomatedSearch();
@@ -138,6 +115,7 @@ if (window === window.top) {
         window.stopRewardsTask = stopAutomatedSearch;
         window.__e2e_performSearch = performSearch;
         window.__e2e_simulateTypingAndSearch = simulateTypingAndSearch;
+        window.__e2e_getSearchTerm = getSearchTerm;
 
         const observer = new MutationObserver(() => applyTheme());
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-darkmode'] });
