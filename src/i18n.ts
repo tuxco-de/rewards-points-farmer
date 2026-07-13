@@ -29,7 +29,18 @@ export const messages = {
             statusResting: "休息中",
             statusChecking: "检查中",
             statusCountdown: "倒计时",
-            completed: "✅ 完成"
+            completed: "✅ 完成",
+            settings: "设置",
+            back: "返回",
+            searchInterval: "搜索间隔（秒）",
+            minInterval: "最短",
+            maxInterval: "最长",
+            scrollTime: "单轮滚动时长（秒）",
+            restTime: "暂停时长（分钟）",
+            maxNoProgressCount: "无进度重试次数",
+            saveSettings: "保存设置",
+            settingsSaved: "设置已保存",
+            dedicatedWorker: "专用任务标签页"
         },
         status: {
             detectedPrev: "检测到之前的搜索任务，正在恢复...",
@@ -48,7 +59,11 @@ export const messages = {
             failedSidebarDirect: "无法打开侧边栏，尝试直接搜索",
             waitingProgress: "等待获取进度信息...",
             searchStopped: "搜索已停止",
-            searching: (term: string) => `正在搜索: ${term}`
+            searching: (term: string) => `正在搜索: ${term}`,
+            openingWorker: "正在打开专用任务标签页...",
+            popupBlocked: "无法打开专用任务标签页，请允许此站点打开弹窗",
+            stopRequested: "已通知专用任务标签页停止",
+            runningInWorker: "任务正在专用标签页中执行"
         },
         parser: {
             completed: "已完成",
@@ -73,7 +88,18 @@ export const messages = {
             statusResting: "Resting",
             statusChecking: "Checking",
             statusCountdown: "Countdown",
-            completed: "✅ Done"
+            completed: "✅ Done",
+            settings: "Settings",
+            back: "Back",
+            searchInterval: "Search interval (seconds)",
+            minInterval: "Minimum",
+            maxInterval: "Maximum",
+            scrollTime: "Scroll duration (seconds)",
+            restTime: "Rest duration (minutes)",
+            maxNoProgressCount: "No-progress retries",
+            saveSettings: "Save settings",
+            settingsSaved: "Settings saved",
+            dedicatedWorker: "Dedicated task tab"
         },
         status: {
             detectedPrev: "Detected previous task, resuming...",
@@ -92,7 +118,11 @@ export const messages = {
             failedSidebarDirect: "Failed to open sidebar, trying direct search",
             waitingProgress: "Waiting for progress info...",
             searchStopped: "Search stopped",
-            searching: (term: string) => `Searching: ${term}`
+            searching: (term: string) => `Searching: ${term}`,
+            openingWorker: "Opening the dedicated task tab...",
+            popupBlocked: "Unable to open the dedicated task tab. Allow pop-ups for this site.",
+            stopRequested: "The dedicated task tab was asked to stop",
+            runningInWorker: "Task is running in the dedicated tab"
         },
         parser: {
             completed: "Completed",

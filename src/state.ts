@@ -1,6 +1,6 @@
 import { config } from './config';
 
-const STORAGE_KEY = 'bing_rewards_auto_searcher_state';
+export const STORAGE_KEY = 'bing_rewards_auto_searcher_state';
 const CONFIG_KEY = 'bing_rewards_config';
 export const MAX_DAILY_TASK_ATTEMPTS = 4;
 
@@ -266,10 +266,19 @@ class StateStore {
             const saved = localStorage.getItem(CONFIG_KEY);
             if (saved) {
                 const c = JSON.parse(saved);
-                if (c.restTime) config.restTime = c.restTime;
-                if (c.scrollTime) config.scrollTime = c.scrollTime;
-                if (c.waitTime) config.waitTime = c.waitTime;
-                if (c.maxNoProgressCount) config.maxNoProgressCount = c.maxNoProgressCount;
+                if (Number.isFinite(c.restTime) && c.restTime > 0) config.restTime = c.restTime;
+                if (Number.isFinite(c.scrollTime) && c.scrollTime > 0) config.scrollTime = c.scrollTime;
+                if (Number.isFinite(c.waitTime) && c.waitTime > 0) config.waitTime = c.waitTime;
+                if (Number.isFinite(c.maxNoProgressCount) && c.maxNoProgressCount > 0) {
+                    config.maxNoProgressCount = c.maxNoProgressCount;
+                }
+                if (Array.isArray(c.searchInterval) && c.searchInterval.length === 2) {
+                    const min = Number(c.searchInterval[0]);
+                    const max = Number(c.searchInterval[1]);
+                    if (Number.isFinite(min) && Number.isFinite(max) && min > 0 && max >= min) {
+                        config.searchInterval = [min, max];
+                    }
+                }
                 if (c.isCollapsed !== undefined) this.searchState.isCollapsed = c.isCollapsed;
             }
         } catch (e) {
@@ -283,6 +292,7 @@ class StateStore {
                 restTime: config.restTime,
                 scrollTime: config.scrollTime,
                 waitTime: config.waitTime,
+                searchInterval: config.searchInterval,
                 maxNoProgressCount: config.maxNoProgressCount,
                 isCollapsed: this.searchState.isCollapsed
             }));

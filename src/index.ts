@@ -1,11 +1,12 @@
 import { config } from './config';
-import { store, sleep, getRandomInterval } from './state';
-import { createUI, applyCollapseState, applyTheme, updateStatus, showCompletionNotification, setSearchButtonState, updateProgressUI } from './ui';
-import { openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForElement, waitForIframeContent } from './dom';
+import { store, sleep, getRandomInterval, STORAGE_KEY } from './state';
+import { createUI, applyCollapseState, applyTheme, updateStatus, showCompletionNotification, setSearchButtonState, updateProgressUI, updateDailyTasksUI, showToast } from './ui';
+import { openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent } from './dom';
 import { getDataFromPanel, getSearchTermsFromMainDoc } from './parser';
 import { countdownAsync, simulateScrollingAsync, searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm } from './search';
 import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
+import { consumePendingWorkerCommand, initializeDedicatedWorkerContext, isDedicatedWorkerContext, listenForWorkerCommands, requestDedicatedWorkerStart, requestDedicatedWorkerStop } from './worker';
 
 declare global {
     interface Window {
@@ -14,6 +15,78 @@ declare global {
         __e2e_performSearch: () => Promise<void>;
         __e2e_simulateTypingAndSearch: (term: string) => Promise<boolean>;
         __e2e_getSearchTerm: () => string;
+        __e2e_isDedicatedWorker: () => boolean;
+        __e2e_isLocalSearchRunning: () => boolean;
+    }
+}
+
+let dedicatedWorker = false;
+let sharedIsSearching = false;
+
+function applySharedStateToController(savedState: any) {
+    store.isSearching = false;
+    sharedIsSearching = Boolean(savedState?.isSearching);
+
+    if (savedState?.currentProgress) store.currentProgress = savedState.currentProgress;
+    if (savedState?.usedSearchTerms) store.usedSearchTerms = savedState.usedSearchTerms;
+    if (savedState?.mainPageSearchTerms) store.mainPageSearchTerms = savedState.mainPageSearchTerms;
+    if (savedState?.iframeSearchTerms) store.iframeSearchTerms = savedState.iframeSearchTerms;
+    if (savedState?.dailyTasksData) store.dailyTasksData = savedState.dailyTasksData;
+
+    updateProgressUI();
+    updateDailyTasksUI(store.dailyTasksData);
+    setSearchButtonState(sharedIsSearching ? 'searching' : 'idle');
+    if (sharedIsSearching) updateStatus(t('status', 'runningInWorker'));
+}
+
+function syncControllerState() {
+    applySharedStateToController(store.loadState());
+}
+
+async function startFromCurrentContext() {
+    if (dedicatedWorker) {
+        if (!store.isSearching) await startAutomatedSearch();
+        return;
+    }
+
+    if (!requestDedicatedWorkerStart()) {
+        showToast(t('status', 'popupBlocked'), 5000);
+        updateStatus(t('status', 'popupBlocked'));
+        return;
+    }
+
+    sharedIsSearching = true;
+    setSearchButtonState('searching');
+    updateStatus(t('status', 'openingWorker'));
+}
+
+function stopFromCurrentContext() {
+    if (dedicatedWorker) {
+        stopAutomatedSearch();
+        return;
+    }
+
+    requestDedicatedWorkerStop();
+    store.clearState();
+    sharedIsSearching = false;
+    setSearchButtonState('idle');
+    updateStatus(t('status', 'stopRequested'));
+}
+
+async function toggleSearchFromCurrentContext() {
+    const isRunning = dedicatedWorker ? store.isSearching : sharedIsSearching;
+    if (isRunning) stopFromCurrentContext();
+    else await startFromCurrentContext();
+}
+
+async function collectRewardsDataInWorker() {
+    if (await openRewardsSidebarAsync()) {
+        await waitForIframeContent(10000);
+        getDataFromPanel();
+        getSearchTermsFromMainDoc();
+        await closeRewardsSidebarAsync();
+    } else {
+        getSearchTermsFromMainDoc();
     }
 }
 
@@ -98,7 +171,7 @@ function restoreState() {
 }
 
 window.addEventListener('beforeunload', () => {
-    if (store.isSearching) {
+    if (isDedicatedWorkerContext() && store.isSearching) {
         store.saveState();
     }
 });
@@ -107,15 +180,28 @@ window.addEventListener('beforeunload', () => {
 if (window === window.top) {
     window.addEventListener('load', function () {
         console.log('Rewards Points Farmer 已加载');
+        dedicatedWorker = initializeDedicatedWorkerContext();
         store.loadConfig();
-        createUI();
+        createUI({
+            isWorker: dedicatedWorker,
+            onToggleSearch: toggleSearchFromCurrentContext
+        });
         applyCollapseState();
 
-        window.startRewardsTask = startAutomatedSearch;
-        window.stopRewardsTask = stopAutomatedSearch;
+        window.startRewardsTask = () => { void startFromCurrentContext(); };
+        window.stopRewardsTask = stopFromCurrentContext;
         window.__e2e_performSearch = performSearch;
         window.__e2e_simulateTypingAndSearch = simulateTypingAndSearch;
         window.__e2e_getSearchTerm = getSearchTerm;
+        window.__e2e_isDedicatedWorker = isDedicatedWorkerContext;
+        window.__e2e_isLocalSearchRunning = () => store.isSearching;
+
+        if (!dedicatedWorker) {
+            syncControllerState();
+            window.addEventListener('storage', event => {
+                if (event.key === STORAGE_KEY) syncControllerState();
+            });
+        }
 
         const observer = new MutationObserver(() => applyTheme());
         observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-darkmode'] });
@@ -123,22 +209,30 @@ if (window === window.top) {
         window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
         setTimeout(() => {
-            const restored = restoreState();
-            if (!restored) {
-                setTimeout(() => {
-                    const getRewardsDataAsync = async () => {
-                        if (await openRewardsSidebarAsync()) {
-                            await waitForIframeContent(10000);
-                            getDataFromPanel();
-                            getSearchTermsFromMainDoc();
-                            await closeRewardsSidebarAsync();
-                        } else {
-                            getSearchTermsFromMainDoc();
-                        }
-                    };
-                    getRewardsDataAsync();
-                }, 1000);
+            if (!dedicatedWorker) {
+                getSearchTermsFromMainDoc();
+                return;
             }
+
+            const pendingCommand = consumePendingWorkerCommand();
+            if (pendingCommand?.action === 'stop') {
+                stopAutomatedSearch();
+            } else {
+                const restored = restoreState();
+                if (!restored && pendingCommand?.action === 'start') {
+                    void startAutomatedSearch();
+                } else if (!restored) {
+                    void collectRewardsDataInWorker();
+                }
+            }
+
+            listenForWorkerCommands(command => {
+                if (command.action === 'start' && !store.isSearching) {
+                    void startAutomatedSearch();
+                } else if (command.action === 'stop') {
+                    stopAutomatedSearch();
+                }
+            });
         }, 1000);
     });
 }

@@ -4,6 +4,7 @@ import { updateStatus, updateCountdown, showCompletionNotification, setSearchBut
 import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent, simulateTypingAndSearch } from './dom';
 import { getDataFromPanel, getSearchTermsFromMainDoc, executeDailyTasksAsync, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
 import { t } from './i18n';
+import { isDedicatedWorkerContext } from './worker';
 
 export async function simulateScrollingAsync() {
     updateStatus(t('status', 'browsing'));
@@ -214,7 +215,7 @@ export function stopAutomatedSearch() {
 }
 
 export async function performSearch(task?: DailyTask | null) {
-    if (!store.isSearching) return;
+    if (!isDedicatedWorkerContext() || !store.isSearching) return;
     
     const activeTask = task || getActiveDailyTaskForSearch();
     if (!activeTask) {
@@ -228,7 +229,11 @@ export async function performSearch(task?: DailyTask | null) {
     updateStatus(t('status', 'searching', searchTerm));
     store.saveState();
     
-    const url = `https://www.bing.com/search?q=${encodeURIComponent(searchTerm)}`;
+    const searchUrl = new URL(window.location.href);
+    if (searchUrl.protocol === 'http:' || searchUrl.protocol === 'https:') searchUrl.pathname = '/search';
+    searchUrl.search = '';
+    searchUrl.hash = '';
+    searchUrl.searchParams.set('q', searchTerm);
     
     const typingSuccess = await simulateTypingAndSearch(searchTerm);
     if (typingSuccess) {
@@ -237,11 +242,12 @@ export async function performSearch(task?: DailyTask | null) {
         console.log('[RewardsHelper] 模拟提交后页面未发生跳转，使用 fallback 跳转');
     }
     
-    window.location.href = url;
+    window.location.href = searchUrl.toString();
 }
 
 export async function searchLoop() {
-    while (store.isSearching && !store.searchState.needRest) {
+    if (!isDedicatedWorkerContext()) return;
+    while (isDedicatedWorkerContext() && store.isSearching && !store.searchState.needRest) {
         updateStatus(t('status', 'waitingProgress'));
         store.searchState.currentAction = 'checking';
         
@@ -310,6 +316,10 @@ export async function searchLoop() {
 }
 
 export async function startAutomatedSearch() {
+    if (!isDedicatedWorkerContext()) {
+        console.warn('[RewardsHelper] 已阻止非专用任务标签页启动自动搜索');
+        return;
+    }
     const hasUnfinishedTasks = store.dailyTasksData && store.dailyTasksData.some(t => t.status === '未完成');
     if (store.currentProgress.completed && !hasUnfinishedTasks) {
         updateStatus(t('status', 'alreadyCompleted'));

@@ -1,8 +1,12 @@
 import { config } from './config';
 import { store } from './state';
 import { isDarkMode } from './dom';
-import { startAutomatedSearch, stopAutomatedSearch } from './search';
 import { t } from './i18n';
+
+export interface UIActions {
+    isWorker: boolean;
+    onToggleSearch: () => void | Promise<void>;
+}
 
 export function injectStyles() {
     if (document.getElementById('rh-styles')) return;
@@ -28,6 +32,15 @@ export function injectStyles() {
             --rh-shadow: 0 8px 24px rgba(0,0,0,0.4);
         }
         
+        #rewards-helper-container {
+            position: fixed;
+            right: max(20px, env(safe-area-inset-right));
+            bottom: max(20px, env(safe-area-inset-bottom));
+            z-index: 100000;
+            display: flex;
+            align-items: flex-end;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
         #rh-badge {
             display: inline-flex;
             align-items: center;
@@ -47,8 +60,9 @@ export function injectStyles() {
             user-select: none;
             position: relative;
             z-index: 100000;
-            margin-right: 16px;
+            margin: 0;
             white-space: nowrap;
+            appearance: none;
         }
         #rh-badge:hover {
             background: var(--rh-accent);
@@ -65,10 +79,10 @@ export function injectStyles() {
         
         #rh-dropdown {
             position: absolute;
-            top: 100%;
-            right: 16px;
-            margin-top: 12px;
-            width: 320px;
+            right: 0;
+            bottom: calc(100% + 12px);
+            width: min(320px, calc(100vw - 32px));
+            max-height: calc(100vh - 92px);
             background: var(--rh-bg);
             border: 1px solid var(--rh-border);
             border-radius: 12px;
@@ -83,6 +97,8 @@ export function injectStyles() {
             color: var(--rh-text);
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
+            overflow-y: auto;
+            box-sizing: border-box;
         }
         #rh-dropdown.show {
             display: flex;
@@ -98,6 +114,48 @@ export function injectStyles() {
             font-size: 15px;
             border-bottom: 1px solid var(--rh-border);
             padding-bottom: 12px;
+        }
+        .rh-header-title {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .rh-icon-btn {
+            width: 32px;
+            height: 32px;
+            flex: 0 0 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 0;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--rh-text);
+            cursor: pointer;
+            font-size: 18px;
+        }
+        .rh-icon-btn:hover {
+            background: var(--rh-border);
+        }
+        .rh-view {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .rh-view[hidden] {
+            display: none;
+        }
+        .rh-worker-mode {
+            align-items: center;
+            align-self: flex-start;
+            background: color-mix(in srgb, var(--rh-success) 12%, transparent);
+            border: 1px solid color-mix(in srgb, var(--rh-success) 32%, transparent);
+            border-radius: 6px;
+            color: var(--rh-success);
+            display: inline-flex;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 8px;
         }
         
         .rh-progress-container {
@@ -146,6 +204,46 @@ export function injectStyles() {
         .rh-btn:hover { opacity: 0.9; }
         .rh-btn:active { transform: scale(0.98); }
         .rh-btn.danger { background: var(--rh-danger); }
+        .rh-settings-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .rh-settings-field > label,
+        .rh-settings-label {
+            color: var(--rh-text-sec);
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .rh-settings-range {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 10px;
+        }
+        .rh-settings-range label {
+            color: var(--rh-text-sec);
+            display: flex;
+            flex-direction: column;
+            font-size: 11px;
+            gap: 4px;
+        }
+        .rh-input {
+            width: 100%;
+            min-width: 0;
+            height: 36px;
+            padding: 0 10px;
+            border: 1px solid var(--rh-border);
+            border-radius: 6px;
+            box-sizing: border-box;
+            background: transparent;
+            color: var(--rh-text);
+            font: inherit;
+            font-size: 13px;
+        }
+        .rh-input:focus {
+            border-color: var(--rh-accent);
+            outline: 2px solid color-mix(in srgb, var(--rh-accent) 20%, transparent);
+        }
         
         .rh-tasks-section {
             border-top: 1px solid var(--rh-border);
@@ -198,73 +296,89 @@ export function injectStyles() {
             opacity: 1;
             visibility: visible;
         }
+        @media (max-width: 480px) {
+            #rewards-helper-container {
+                right: max(12px, env(safe-area-inset-right));
+                bottom: max(12px, env(safe-area-inset-bottom));
+            }
+            #rh-dropdown {
+                width: calc(100vw - 24px);
+                max-height: calc(100vh - 76px);
+            }
+        }
     `;
     document.head.appendChild(style);
 }
 
-export function createUI() {
+export function createUI(actions: UIActions) {
     injectStyles();
 
     const badgeContainer = document.createElement('div');
-    badgeContainer.style.position = 'relative';
-    badgeContainer.style.display = 'inline-flex';
-    badgeContainer.style.alignItems = 'center';
     badgeContainer.id = 'rewards-helper-container';
-    
-    let injected = false;
-    const rightContainer = document.querySelector('#id_rh') || document.querySelector('.sw_pre');
-    
-    if (rightContainer && rightContainer.parentNode) {
-        rightContainer.parentNode.insertBefore(badgeContainer, rightContainer);
-        injected = true;
-    } else {
-        const nativeHeader = document.querySelector('#b_header');
-        if (nativeHeader) {
-            nativeHeader.appendChild(badgeContainer);
-            injected = true;
-        }
-    }
-    
-    if (!injected) {
-        // Fallback to absolute
-        badgeContainer.style.position = 'fixed';
-        badgeContainer.style.top = '15px';
-        badgeContainer.style.right = '150px';
-        badgeContainer.style.zIndex = '100000';
-        document.body.appendChild(badgeContainer);
-    }
+    document.body.appendChild(badgeContainer);
 
     badgeContainer.innerHTML = `
-        <div id="rh-badge" title="Rewards Points Farmer">
+        <button id="rh-badge" type="button" title="Rewards Points Farmer" aria-haspopup="dialog" aria-expanded="false">
             <span style="margin-right: 6px;">🤖</span>
             <span id="rh-badge-text">${t('ui', 'init')}</span>
-        </div>
-        <div id="rh-dropdown">
+        </button>
+        <div id="rh-dropdown" role="dialog" aria-label="Rewards Points Farmer">
             <div class="rh-header">
-                <span>🤖 Rewards Points Farmer</span>
+                <span id="rh-panel-title" class="rh-header-title">🤖 Rewards Points Farmer</span>
+                <button id="rh-settings-toggle" class="rh-icon-btn" type="button" aria-label="${t('ui', 'settings')}" title="${t('ui', 'settings')}">⚙</button>
             </div>
-            
-            <div class="rh-progress-container">
-                <div class="rh-progress-header">
-                    <span>${t('ui', 'searchProgress')}</span>
-                    <span id="rh-progress-text">0 / 0</span>
+
+            <div id="rh-main-view" class="rh-view">
+                ${actions.isWorker ? `<div id="rh-worker-mode" class="rh-worker-mode">${t('ui', 'dedicatedWorker')}</div>` : ''}
+                <div class="rh-progress-container">
+                    <div class="rh-progress-header">
+                        <span>${t('ui', 'searchProgress')}</span>
+                        <span id="rh-progress-text">0 / 0</span>
+                    </div>
+                    <div class="rh-progress-bar-bg">
+                        <div id="rh-progress-fill" class="rh-progress-bar-fill"></div>
+                    </div>
+                    <div id="rh-status-text" class="rh-status">${t('ui', 'statusInit')}</div>
                 </div>
-                <div class="rh-progress-bar-bg">
-                    <div id="rh-progress-fill" class="rh-progress-bar-fill"></div>
+
+                <button id="rh-start-btn" class="rh-btn">${t('ui', 'startFarming')}</button>
+
+                <div class="rh-tasks-section">
+                    <div class="rh-tasks-header">
+                        <span>${t('ui', 'dailyTasks')}</span>
+                        <span id="rh-tasks-count" style="color: var(--rh-text-sec);"></span>
+                    </div>
+                    <div id="rh-tasks-list">
+                        <div style="font-size: 12px; color: var(--rh-text-sec);">${t('ui', 'fetchingTasks')}</div>
+                    </div>
                 </div>
-                <div id="rh-status-text" class="rh-status">${t('ui', 'statusInit')}</div>
             </div>
-            
-            <button id="rh-start-btn" class="rh-btn">${t('ui', 'startFarming')}</button>
-            
-            <div class="rh-tasks-section">
-                <div class="rh-tasks-header">
-                    <span>${t('ui', 'dailyTasks')}</span>
-                    <span id="rh-tasks-count" style="color: var(--rh-text-sec);"></span>
+
+            <div id="rh-settings-view" class="rh-view" hidden>
+                <div class="rh-settings-field">
+                    <span class="rh-settings-label">${t('ui', 'searchInterval')}</span>
+                    <div class="rh-settings-range">
+                        <label>${t('ui', 'minInterval')}
+                            <input id="rh-min-interval" class="rh-input" type="number" min="1" max="300" step="1">
+                        </label>
+                        <label>${t('ui', 'maxInterval')}
+                            <input id="rh-max-interval" class="rh-input" type="number" min="1" max="300" step="1">
+                        </label>
+                    </div>
                 </div>
-                <div id="rh-tasks-list">
-                    <div style="font-size: 12px; color: var(--rh-text-sec);">${t('ui', 'fetchingTasks')}</div>
+                <div class="rh-settings-field">
+                    <label for="rh-scroll-time">${t('ui', 'scrollTime')}</label>
+                    <input id="rh-scroll-time" class="rh-input" type="number" min="3" max="120" step="1">
                 </div>
+                <div class="rh-settings-field">
+                    <label for="rh-rest-time">${t('ui', 'restTime')}</label>
+                    <input id="rh-rest-time" class="rh-input" type="number" min="1" max="120" step="1">
+                </div>
+                <div class="rh-settings-field">
+                    <label for="rh-max-no-progress">${t('ui', 'maxNoProgressCount')}</label>
+                    <input id="rh-max-no-progress" class="rh-input" type="number" min="1" max="20" step="1">
+                </div>
+                <button id="rh-save-settings" class="rh-btn" type="button">${t('ui', 'saveSettings')}</button>
             </div>
         </div>
     `;
@@ -278,26 +392,87 @@ export function createUI() {
 
     const badge = document.getElementById('rh-badge');
     const dropdown = document.getElementById('rh-dropdown');
+    const settingsToggle = document.getElementById('rh-settings-toggle') as HTMLButtonElement | null;
+    const panelTitle = document.getElementById('rh-panel-title');
+    const mainView = document.getElementById('rh-main-view');
+    const settingsView = document.getElementById('rh-settings-view');
+
+    const setInputValue = (id: string, value: number) => {
+        const input = document.getElementById(id) as HTMLInputElement | null;
+        if (input) input.value = String(value);
+    };
+
+    const showSettings = (visible: boolean) => {
+        if (!mainView || !settingsView || !settingsToggle || !panelTitle) return;
+        mainView.hidden = visible;
+        settingsView.hidden = !visible;
+        panelTitle.textContent = visible ? t('ui', 'settings') : '🤖 Rewards Points Farmer';
+        settingsToggle.textContent = visible ? '←' : '⚙';
+        settingsToggle.setAttribute('aria-label', t('ui', visible ? 'back' : 'settings'));
+        settingsToggle.title = t('ui', visible ? 'back' : 'settings');
+
+        if (visible) {
+            setInputValue('rh-min-interval', config.searchInterval[0]);
+            setInputValue('rh-max-interval', config.searchInterval[1]);
+            setInputValue('rh-scroll-time', config.scrollTime);
+            setInputValue('rh-rest-time', Math.max(1, Math.round(config.restTime / 60)));
+            setInputValue('rh-max-no-progress', config.maxNoProgressCount);
+        }
+    };
+
+    const readClampedNumber = (id: string, min: number, max: number, fallback: number) => {
+        const input = document.getElementById(id) as HTMLInputElement | null;
+        const value = Number(input?.value);
+        if (!Number.isFinite(value)) return fallback;
+        return Math.min(max, Math.max(min, Math.round(value)));
+    };
     
     if (badge && dropdown) {
         badge.onclick = (e) => {
             e.stopPropagation();
             dropdown.classList.toggle('show');
+            badge.setAttribute('aria-expanded', String(dropdown.classList.contains('show')));
         };
         // Click outside to close
         document.addEventListener('click', (e) => {
             if (!badgeContainer.contains(e.target as Node)) {
                 dropdown.classList.remove('show');
+                badge.setAttribute('aria-expanded', 'false');
+                showSettings(false);
             }
         });
     }
 
+    if (settingsToggle) {
+        settingsToggle.onclick = (event) => {
+            event.stopPropagation();
+            showSettings(Boolean(settingsView?.hidden ?? true));
+        };
+    }
+
+    const saveSettingsBtn = document.getElementById('rh-save-settings');
+    if (saveSettingsBtn) {
+        saveSettingsBtn.onclick = () => {
+            const minInterval = readClampedNumber('rh-min-interval', 1, 300, config.searchInterval[0]);
+            const maxInterval = readClampedNumber('rh-max-interval', minInterval, 300, config.searchInterval[1]);
+            config.searchInterval = [minInterval, maxInterval];
+            config.scrollTime = readClampedNumber('rh-scroll-time', 3, 120, config.scrollTime);
+            config.restTime = readClampedNumber('rh-rest-time', 1, 120, Math.round(config.restTime / 60)) * 60;
+            config.maxNoProgressCount = readClampedNumber('rh-max-no-progress', 1, 20, config.maxNoProgressCount);
+            store.saveConfig();
+            showSettings(false);
+            showToast(t('ui', 'settingsSaved'));
+        };
+    }
+
     const startBtn = document.getElementById('rh-start-btn');
     if (startBtn) {
-        startBtn.onclick = () => {
-            if (!store.isSearching) startAutomatedSearch();
-            else stopAutomatedSearch();
-            if (dropdown) dropdown.classList.remove('show');
+        startBtn.onclick = async () => {
+            await actions.onToggleSearch();
+            if (dropdown) {
+                dropdown.classList.remove('show');
+                badge?.setAttribute('aria-expanded', 'false');
+            }
         };
     }
 }
@@ -411,11 +586,6 @@ export function showCompletionNotification() {
 
 export function applyTheme() {
     // Theme is mostly handled by CSS matching .b_dark on body/html
-    const badge = document.getElementById('rh-badge');
-    const btn = document.getElementById('rh-start-btn');
-    if (btn && !store.isSearching) {
-        btn.style.backgroundColor = 'var(--rh-accent)';
-    }
 }
 
 export function setSearchButtonState(state: 'searching' | 'idle') {

@@ -127,8 +127,9 @@ test.describe('Android ADB browser UI @android', () => {
       await expect(page.locator('#rh-badge')).toBeVisible({ timeout: 15_000 });
       await page.locator('#rh-badge').click();
       await expect(page.locator('#rh-dropdown')).toBeVisible();
-      await expect(page.locator('#rh-progress-text')).toHaveText('0/90', { timeout: 10_000 });
-      await expect(page.locator('#rh-tasks-list')).toContainText('NASA Artemis mission');
+      await expect(page.locator('#rh-progress-text')).toHaveText('0/0');
+      expect(await page.evaluate(() => (window as any).__e2e_isDedicatedWorker())).toBe(false);
+      expect(await page.evaluate(() => (window as any).__e2e_isLocalSearchRunning())).toBe(false);
     } finally {
       await browser.close();
     }

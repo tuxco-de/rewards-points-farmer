@@ -14,7 +14,7 @@ test.use({
   video: 'off',
 });
 
-async function createLivePage(browser: Browser) {
+async function createLivePage(browser: Browser, options: { worker?: boolean } = {}) {
   const contextOptions: BrowserContextOptions = {
     locale: 'zh-CN',
     storageState: storageStatePath,
@@ -23,7 +23,9 @@ async function createLivePage(browser: Browser) {
   const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
   await page.addInitScript({ path: userscriptPath });
-  await page.goto(liveUrl, {
+  const targetUrl = new URL(liveUrl);
+  if (options.worker) targetUrl.searchParams.set('rewards_helper_worker', '1');
+  await page.goto(targetUrl.toString(), {
     waitUntil: 'domcontentloaded',
   });
   await page.waitForFunction(() => typeof (window as any).startRewardsTask === 'function');
@@ -122,8 +124,8 @@ test.describe('live Bing smoke @live', () => {
     await context.close();
   });
 
-  test('updates the script panel from live readonly Rewards parsing', async ({ browser }) => {
-    const { context, page } = await createLivePage(browser);
+  test('updates the script panel from dedicated-tab readonly Rewards parsing', async ({ browser }) => {
+    const { context, page } = await createLivePage(browser, { worker: true });
 
     await page.waitForFunction(
       () => {
