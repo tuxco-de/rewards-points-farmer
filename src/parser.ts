@@ -1,5 +1,5 @@
 import { config } from './config';
-import { DailyTask, getDailyTaskUrl, removeDailyTask, store, upsertDailyTask } from './state';
+import { DailyTask, getDailyTaskUrl, isUrlLikeSearchCandidate, removeDailyTask, store, upsertDailyTask } from './state';
 import { updateDailyTasksUI, updateProgressUI } from './ui';
 import { t } from './i18n';
 
@@ -239,7 +239,7 @@ function getUniqueTaskCandidates(candidates: string[]): string[] {
     const result: string[] = [];
     candidates.forEach(candidate => {
         const cleaned = cleanupTaskText(candidate);
-        if (cleaned.length >= 2 && cleaned.length <= 80 && !/^\d+$/.test(cleaned) && !result.some(v => v.toLowerCase() === cleaned.toLowerCase())) {
+        if (cleaned.length >= 2 && cleaned.length <= 80 && !/^\d+$/.test(cleaned) && !isUrlLikeSearchCandidate(cleaned) && !result.some(v => v.toLowerCase() === cleaned.toLowerCase())) {
             result.push(cleaned);
         }
     });
@@ -311,7 +311,7 @@ function createDailyTaskFromCard(card: Element, idx: number, status: string): Da
 
 function createDailyTaskFromUrl(url: string, title = '', source = 'suggested'): DailyTask | null {
     const query = getHrefQuery(url);
-    const queryCandidates = getUniqueTaskCandidates([query, title, url]);
+    const queryCandidates = getUniqueTaskCandidates([query, title]);
     const taskTitle = cleanupTaskText(title || query || url);
     if (!url || !taskTitle) return null;
     return {

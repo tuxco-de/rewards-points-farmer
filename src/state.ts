@@ -35,11 +35,28 @@ function normalizeCandidate(candidate: string): string {
         .trim();
 }
 
+export function isUrlLikeSearchCandidate(candidate: string): boolean {
+    let decoded = String(candidate || '').trim();
+    for (let i = 0; i < 2; i++) {
+        try {
+            const next = decodeURIComponent(decoded);
+            if (next === decoded) break;
+            decoded = next;
+        } catch {
+            break;
+        }
+    }
+
+    return /^(?:[a-z][a-z0-9+.-]*:|\/\/|www\.|\/)/i.test(decoded) ||
+        /^(?:[\w-]+\.)+[a-z]{2,}(?:[\/:?#]|$)/i.test(decoded) ||
+        /\b(?:www\.)?bing\.com(?:[\/:?#]|$)/i.test(decoded);
+}
+
 function uniqueCandidates(candidates: string[]): string[] {
     const result: string[] = [];
     candidates.forEach(candidate => {
         const cleaned = normalizeCandidate(candidate);
-        if (cleaned.length >= 2 && cleaned.length <= 80 && !result.some(v => v.toLowerCase() === cleaned.toLowerCase())) {
+        if (cleaned.length >= 2 && cleaned.length <= 80 && !isUrlLikeSearchCandidate(cleaned) && !result.some(v => v.toLowerCase() === cleaned.toLowerCase())) {
             result.push(cleaned);
         }
     });
@@ -146,8 +163,10 @@ export function markDailyTaskSkipped(taskInput: DailyTask | string) {
 }
 
 export function getDailyTaskSearchTerm(task: DailyTask): string {
-    const index = Math.max(0, Math.min(task.attempts - 1, task.queryCandidates.length - 1));
-    return task.queryCandidates[index] || task.title;
+    const candidates = uniqueCandidates([...task.queryCandidates, task.title]);
+    if (candidates.length === 0) return '';
+    const index = Math.max(0, Math.min(task.attempts - 1, candidates.length - 1));
+    return candidates[index];
 }
 
 class StateStore {

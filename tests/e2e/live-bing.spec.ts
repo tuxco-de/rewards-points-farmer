@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const userscriptPath = path.resolve(__dirname, '../../dist/rewards-points-farmer.user.js');
 const storageStatePath = path.resolve(__dirname, '../../playwright/.auth/bing.json');
+const cookieHeader = process.env.PLAYWRIGHT_BING_COOKIE_HEADER?.trim() || '';
 const liveUrl = 'https://www.bing.com/search?q=playwright%20smoke';
 const rewardsEntrySelector = '.points-container, #id_rc, #rewards-badge';
 const visibleRewardsEntrySelector = rewardsEntrySelector
@@ -21,10 +22,22 @@ test.use({
 async function createLivePage(browser: Browser, options: { worker?: boolean } = {}) {
   const contextOptions: BrowserContextOptions = {
     locale: 'zh-CN',
-    storageState: storageStatePath,
     timezoneId: 'Asia/Shanghai',
   };
+  if (!cookieHeader) contextOptions.storageState = storageStatePath;
   const context = await browser.newContext(contextOptions);
+  if (cookieHeader) {
+    const cookies = cookieHeader.split(';').flatMap(part => {
+      const separator = part.indexOf('=');
+      if (separator <= 0) return [];
+      return [{
+        name: part.slice(0, separator).trim(),
+        value: part.slice(separator + 1).trim(),
+        url: 'https://www.bing.com/',
+      }];
+    });
+    await context.addCookies(cookies);
+  }
   const page = await context.newPage();
   await page.addInitScript({ path: userscriptPath });
   const targetUrl = new URL(liveUrl);
@@ -63,8 +76,8 @@ async function expectSearchNotStarted(page: Page) {
 
 test.describe('live Bing smoke @live', () => {
   test.skip(
-    !fs.existsSync(storageStatePath),
-    'Run "npm run auth:bing" first to create playwright/.auth/bing.json.'
+    !cookieHeader && !fs.existsSync(storageStatePath),
+    'Provide PLAYWRIGHT_BING_COOKIE_HEADER or run "npm run auth:bing" first.'
   );
 
   test('loads Bing with saved login state and injects the userscript UI', async ({ browser }) => {
@@ -136,5 +149,72 @@ test.describe('live Bing smoke @live', () => {
     await expectSearchNotStarted(page);
 
     await context.close();
+  });
+
+  test('executes one live card follow-up search without using a URL @live-card', async ({ browser }) => {
+    test.skip(process.env.PLAYWRIGHT_LIVE_CARD_E2E !== '1', 'Set PLAYWRIGHT_LIVE_CARD_E2E=1 to execute one live card task.');
+    test.setTimeout(120_000);
+    const { context, page } = await createLivePage(browser, { worker: true });
+
+    try {
+      let liveState: { phase: string; queue: Array<{ title: string; queryCandidates: string[] }> } | null = null;
+      await expect
+        .poll(async () => {
+          const state = await page.evaluate(() => {
+            if (typeof (window as any).__e2e_getExecutionPhase !== 'function') return null;
+            const progress = document.querySelector('#rh-progress-text')?.textContent?.trim() || '';
+            if (!progress || progress === '0 / 0') return null;
+            return {
+              phase: (window as any).__e2e_getExecutionPhase(),
+              queue: (window as any).__e2e_getDailyTaskQueue(),
+            };
+          }).catch(() => null);
+          if (state) liveState = state;
+          return Boolean(state);
+        }, { timeout: 30_000 })
+        .toBe(true);
+
+      if (!liveState || liveState.phase !== 'cards' || liveState.queue.length === 0) {
+        test.skip(true, 'Live account has no executable card after search points are complete.');
+      }
+
+      const initialTask = liveState.queue[0];
+      expect(initialTask.queryCandidates).not.toEqual(
+        expect.arrayContaining([expect.stringMatching(/(?:^[a-z][a-z0-9+.-]*:|^\/|bing\.com)/i)])
+      );
+
+      await page.evaluate(() => (window as any).startRewardsTask());
+      await expect
+        .poll(
+          () => page.evaluate(() => {
+            const raw = localStorage.getItem('bing_rewards_auto_searcher_state');
+            const state = raw ? JSON.parse(raw) : null;
+            const task = state?.dailyTasksQueue?.[0];
+            if (!task || task.attempts < 2) return null;
+            return {
+              attempts: task.attempts,
+              term: state.usedSearchTerms?.at(-1) || '',
+            };
+          }),
+          { timeout: 90_000 }
+        )
+        .not.toBeNull();
+
+      const result = await page.evaluate(() => {
+        const state = JSON.parse(localStorage.getItem('bing_rewards_auto_searcher_state') || '{}');
+        return {
+          attempts: state.dailyTasksQueue?.[0]?.attempts || 0,
+          term: state.usedSearchTerms?.at(-1) || '',
+        };
+      });
+      expect(result.attempts).toBeGreaterThanOrEqual(2);
+      expect(result.term).not.toMatch(/(?:^[a-z][a-z0-9+.-]*:|^\/|bing\.com)/i);
+      expect(result.term.trim().length).toBeGreaterThan(1);
+    } finally {
+      if (!page.isClosed()) {
+        await page.evaluate(() => (window as any).stopRewardsTask?.()).catch(() => undefined);
+      }
+      if (context.pages().length > 0) await context.close();
+    }
   });
 });

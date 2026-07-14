@@ -260,7 +260,13 @@ test('defers queued card keywords while search points are incomplete', async ({ 
       title: 'NASA Artemis mission',
       status: '未完成',
       points: 10,
-      queryCandidates: ['NASA Artemis mission', 'Artemis mission'],
+      queryCandidates: [
+        'https://www.bing.com/search?q=nasa',
+        'https%3A%2F%2Fwww.bing.com%2Frewards',
+        '/search?q=nasa',
+        'NASA Artemis mission',
+        'Artemis mission',
+      ],
       attempts: 1,
     }],
     attemptedTasks: [],
@@ -289,7 +295,14 @@ test('uses card topic keywords only after search points are complete', async ({ 
       title: 'NASA Artemis mission',
       status: '未完成',
       points: 10,
-      queryCandidates: ['NASA Artemis mission', 'Artemis mission'],
+      queryCandidates: [
+        'https://www.bing.com/search?q=nasa',
+        'https%3A%2F%2Fwww.bing.com%2Frewards',
+        '//www.bing.com/search?q=nasa',
+        '/search?q=nasa',
+        'NASA Artemis mission',
+        'Artemis mission',
+      ],
       attempts: 1,
     }],
     attemptedTasks: [],
@@ -300,7 +313,8 @@ test('uses card topic keywords only after search points are complete', async ({ 
   expect(term).toBe('NASA Artemis mission');
 });
 
-test('executes a card click and its follow-up keyword search end to end', async ({ page }) => {
+test('executes a card click and searches its title when the card query is a URL', async ({ page }) => {
+  test.setTimeout(45_000);
   await loadUserscriptFixture(page, undefined, { worker: true, pointsComplete: true });
 
   await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
@@ -311,16 +325,19 @@ test('executes a card click and its follow-up keyword search end to end', async 
 
   await expect
     .poll(() => page.evaluate(() => document.body.dataset.lastCardClick), { timeout: 10_000 })
-    .toBe('/search?q=daily%20poll');
+    .toBe('/search?q=https%3A%2F%2Fwww.bing.com%2Frewards');
   await expect
-    .poll(() => page.evaluate(() => document.body.dataset.lastQuery), { timeout: 15_000 })
-    .toBe('daily poll');
+    .poll(() => page.evaluate(() => document.body.dataset.lastQuery), { timeout: 25_000 })
+    .toBe('Daily poll');
 
   const savedState = await page.evaluate(() => JSON.parse(localStorage.getItem('bing_rewards_auto_searcher_state') || '{}'));
   expect(savedState.dailyTasksQueue[0]).toMatchObject({
     title: 'Daily poll',
     attempts: 2,
   });
+  expect(savedState.dailyTasksQueue[0].queryCandidates).toEqual(
+    expect.not.arrayContaining([expect.stringMatching(/(?:https?:\/\/|bing\.com|^\/search)/i)])
+  );
 });
 
 test('restores saved in-progress UI state from localStorage', async ({ page }) => {
