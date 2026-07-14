@@ -2,7 +2,7 @@ import { config } from './config';
 import { DailyTask, getDailyTaskSearchTerm, markDailyTaskSkipped, MAX_DAILY_TASK_ATTEMPTS, recordDailyTaskAttempt, store, sleep, getRandomInterval } from './state';
 import { updateStatus, updateCountdown, showCompletionNotification, setSearchButtonState } from './ui';
 import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent, simulateTypingAndSearch } from './dom';
-import { getDataFromPanel, getSearchTermsFromMainDoc, executeDailyTasksAsync, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
+import { getDataFromPanel, getSearchTermsFromMainDoc, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
 import { t } from './i18n';
 import { isDedicatedWorkerContext } from './worker';
 
@@ -75,7 +75,18 @@ export async function ensureFallbackSearchTerms() {
     }
 }
 
+export type ExecutionPhase = 'points' | 'cards' | 'complete';
+
+export function getExecutionPhase(): ExecutionPhase {
+    if (!store.currentProgress.completed) return 'points';
+
+    const hasQueuedCards = store.searchState.dailyTasksQueue.length > 0;
+    const hasUnfinishedCards = store.dailyTasksData.some(task => task.status === '未完成');
+    return hasQueuedCards || hasUnfinishedCards ? 'cards' : 'complete';
+}
+
 function getActiveDailyTaskForSearch(): DailyTask | null {
+    if (getExecutionPhase() !== 'cards') return null;
     const task = store.searchState.dailyTasksQueue[0];
     if (!task || task.attempts <= 0 || task.queryCandidates.length === 0) return null;
     return task;
@@ -217,7 +228,7 @@ export function stopAutomatedSearch() {
 export async function performSearch(task?: DailyTask | null) {
     if (!isDedicatedWorkerContext() || !store.isSearching) return;
     
-    const activeTask = task || getActiveDailyTaskForSearch();
+    const activeTask = getExecutionPhase() === 'cards' ? (task || getActiveDailyTaskForSearch()) : null;
     if (!activeTask) {
         await ensureFallbackSearchTerms();
     }
@@ -256,8 +267,9 @@ export async function searchLoop() {
             getDataFromPanel();
             getSearchTermsFromMainDoc();
             
+            const executionPhase = getExecutionPhase();
             let queuedTaskAction: 'clicked' | 'search' | 'skipped' | 'none' = 'none';
-            if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
+            if (executionPhase === 'cards' && store.searchState.dailyTasksQueue.length > 0) {
                 queuedTaskAction = await runQueuedDailyTaskFromOpenPanel();
             }
             
@@ -280,8 +292,7 @@ export async function searchLoop() {
                 continue;
             }
             
-            const hasUnfinishedDailyTasks = store.dailyTasksData && store.dailyTasksData.some(t => t.status === '未完成');
-            if (store.currentProgress.completed && !hasUnfinishedDailyTasks) {
+            if (executionPhase === 'complete') {
                 showCompletionNotification();
                 updateStatus(t('status', 'allCompleted'));
                 stopAutomatedSearch();
@@ -304,7 +315,7 @@ export async function searchLoop() {
         
         if (!store.isSearching) return;
         
-        updateStatus(t('status', 'waitingNext'));
+        updateStatus(getExecutionPhase() === 'points' ? t('status', 'pointsFirst') : t('status', 'waitingNext'));
         const waitMs = getRandomInterval();
         await countdownAsync(Math.floor(waitMs / 1000), 'waiting');
         
@@ -320,8 +331,7 @@ export async function startAutomatedSearch() {
         console.warn('[RewardsHelper] 已阻止非专用任务标签页启动自动搜索');
         return;
     }
-    const hasUnfinishedTasks = store.dailyTasksData && store.dailyTasksData.some(t => t.status === '未完成');
-    if (store.currentProgress.completed && !hasUnfinishedTasks) {
+    if (getExecutionPhase() === 'complete') {
         updateStatus(t('status', 'alreadyCompleted'));
         return;
     }
@@ -335,8 +345,6 @@ export async function startAutomatedSearch() {
     setSearchButtonState('searching');
     updateStatus(t('status', 'autoStarted'));
     store.saveState();
-    
-    await executeDailyTasksAsync();
     
     searchLoop();
 }

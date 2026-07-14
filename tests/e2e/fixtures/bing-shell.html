@@ -55,6 +55,9 @@
     </main>
 
     <script>
+      const searchProgress = new URLSearchParams(window.location.search).get('pointsComplete') === '1'
+        ? '90 / 90'
+        : '0 / 90';
       const flyoutMarkup = `
         <!doctype html>
         <html>
@@ -62,7 +65,7 @@
             <section aria-label="Rewards panel">
               <div>
                 <span>PC search progress</span>
-                <span>0 / 90</span>
+                <span>${searchProgress}</span>
               </div>
 
               <a class="rw-card" aria-label="Daily poll - 10 points" href="/search?q=daily%20poll">
@@ -88,6 +91,15 @@
         const iframe = document.createElement('iframe');
         iframe.id = 'b_rwFlyout';
         iframe.srcdoc = flyoutMarkup;
+        iframe.addEventListener('load', () => {
+          iframe.contentDocument.addEventListener('click', event => {
+            const card = event.target.closest('.rw-card');
+            if (!card) return;
+            event.preventDefault();
+            document.body.dataset.lastCardClick = card.getAttribute('href');
+            document.body.dataset.cardClickCount = String(Number(document.body.dataset.cardClickCount || 0) + 1);
+          });
+        });
         document.body.appendChild(iframe);
       });
 

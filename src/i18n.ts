@@ -40,7 +40,10 @@ export const messages = {
             maxNoProgressCount: "无进度重试次数",
             saveSettings: "保存设置",
             settingsSaved: "设置已保存",
-            dedicatedWorker: "专用任务标签页"
+            dedicatedWorker: "专用任务标签页",
+            menuStart: "开始专用任务",
+            menuStop: "停止任务",
+            menuSettings: "打开设置"
         },
         status: {
             detectedPrev: "检测到之前的搜索任务，正在恢复...",
@@ -63,7 +66,8 @@ export const messages = {
             openingWorker: "正在打开专用任务标签页...",
             popupBlocked: "无法打开专用任务标签页，请允许此站点打开弹窗",
             stopRequested: "已通知专用任务标签页停止",
-            runningInWorker: "任务正在专用标签页中执行"
+            runningInWorker: "任务正在专用标签页中执行",
+            pointsFirst: "优先完成搜索积分任务..."
         },
         parser: {
             completed: "已完成",
@@ -99,7 +103,10 @@ export const messages = {
             maxNoProgressCount: "No-progress retries",
             saveSettings: "Save settings",
             settingsSaved: "Settings saved",
-            dedicatedWorker: "Dedicated task tab"
+            dedicatedWorker: "Dedicated task tab",
+            menuStart: "Start dedicated task",
+            menuStop: "Stop task",
+            menuSettings: "Open settings"
         },
         status: {
             detectedPrev: "Detected previous task, resuming...",
@@ -122,7 +129,8 @@ export const messages = {
             openingWorker: "Opening the dedicated task tab...",
             popupBlocked: "Unable to open the dedicated task tab. Allow pop-ups for this site.",
             stopRequested: "The dedicated task tab was asked to stop",
-            runningInWorker: "Task is running in the dedicated tab"
+            runningInWorker: "Task is running in the dedicated tab",
+            pointsFirst: "Completing search points first..."
         },
         parser: {
             completed: "Completed",

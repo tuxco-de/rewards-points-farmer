@@ -28,7 +28,11 @@ type SavedState = {
   attemptedTasks?: string[];
 };
 
-async function loadUserscriptFixture(page: Page, savedState?: SavedState, options: { worker?: boolean } = {}) {
+async function loadUserscriptFixture(
+  page: Page,
+  savedState?: SavedState,
+  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean } = {}
+) {
   if (savedState) {
     await page.context().addInitScript(state => {
       localStorage.setItem(
@@ -42,9 +46,21 @@ async function loadUserscriptFixture(page: Page, savedState?: SavedState, option
     }, savedState);
   }
 
+  if (options.menuApi) {
+    await page.context().addInitScript(() => {
+      (window as any).__e2e_menuCommands = [];
+      (window as any).GM_registerMenuCommand = (caption: string, onClick: () => void) => {
+        (window as any).__e2e_menuCommands.push({ caption, onClick });
+        return caption;
+      };
+    });
+  }
+
   await page.context().addInitScript({ path: userscriptPath });
-  const url = options.worker ? `${fixtureUrl}?rewards_helper_worker=1` : fixtureUrl;
-  await page.goto(url);
+  const url = new URL(fixtureUrl);
+  if (options.worker) url.searchParams.set('rewards_helper_worker', '1');
+  if (options.pointsComplete) url.searchParams.set('pointsComplete', '1');
+  await page.goto(url.toString());
   await page.waitForFunction(() => typeof (window as any).startRewardsTask === 'function');
 }
 
@@ -112,6 +128,24 @@ test('opens settings and persists configuration across reloads', async ({ page }
   await expect(page.locator('#rh-scroll-time')).toHaveValue('18');
   await expect(page.locator('#rh-rest-time')).toHaveValue('7');
   await expect(page.locator('#rh-max-no-progress')).toHaveValue('5');
+});
+
+test('registers regular actions in the userscript menu', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, { menuApi: true });
+
+  const captions = await page.evaluate(() =>
+    (window as any).__e2e_menuCommands.map((command: { caption: string }) => command.caption)
+  );
+  expect(captions).toEqual(['Start dedicated task', 'Stop task', 'Open settings']);
+
+  await page.evaluate(() => {
+    const settingsCommand = (window as any).__e2e_menuCommands.find(
+      (command: { caption: string }) => command.caption === 'Open settings'
+    );
+    settingsCommand.onClick();
+  });
+  await expect(page.locator('#rh-dropdown')).toBeVisible();
+  await expect(page.locator('#rh-settings-view')).toBeVisible();
 });
 
 test('keeps the settings panel inside a narrow viewport', async ({ page }) => {
@@ -209,7 +243,7 @@ test('renders parsed task state in the dropdown task list', async ({ page }) => 
   await expect(page.locator('.rh-task-item span').first()).toHaveText('⏳');
 });
 
-test('uses card topic keywords for a queued keyword-dependent task', async ({ page }) => {
+test('defers queued card keywords while search points are incomplete', async ({ page }) => {
   await loadUserscriptFixture(page, {
     isSearching: true,
     currentProgress: {
@@ -220,6 +254,7 @@ test('uses card topic keywords for a queued keyword-dependent task', async ({ pa
       noProgressCount: 0,
     },
     usedSearchTerms: [],
+    mainPageSearchTerms: ['points phase search term'],
     dailyTasksQueue: [{
       url: '/rewards/task/nasa-artemis',
       title: 'NASA Artemis mission',
@@ -232,8 +267,60 @@ test('uses card topic keywords for a queued keyword-dependent task', async ({ pa
   });
 
   await expect(page.locator('#rh-progress-text')).toHaveText('12/90');
+  expect(await page.evaluate(() => (window as any).__e2e_getExecutionPhase())).toBe('points');
+  const term = await page.evaluate(() => (window as any).__e2e_getSearchTerm());
+  expect(term).toBe('points phase search term');
+});
+
+test('uses card topic keywords only after search points are complete', async ({ page }) => {
+  await loadUserscriptFixture(page, {
+    isSearching: true,
+    currentProgress: {
+      current: 90,
+      total: 90,
+      lastChecked: 90,
+      completed: true,
+      noProgressCount: 0,
+    },
+    usedSearchTerms: [],
+    mainPageSearchTerms: ['points phase search term'],
+    dailyTasksQueue: [{
+      url: '/rewards/task/nasa-artemis',
+      title: 'NASA Artemis mission',
+      status: '未完成',
+      points: 10,
+      queryCandidates: ['NASA Artemis mission', 'Artemis mission'],
+      attempts: 1,
+    }],
+    attemptedTasks: [],
+  });
+
+  expect(await page.evaluate(() => (window as any).__e2e_getExecutionPhase())).toBe('cards');
   const term = await page.evaluate(() => (window as any).__e2e_getSearchTerm());
   expect(term).toBe('NASA Artemis mission');
+});
+
+test('executes a card click and its follow-up keyword search end to end', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, { worker: true, pointsComplete: true });
+
+  await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');
+  await expect(page.locator('#b_rwFlyout')).toHaveCount(0);
+
+  await page.evaluate(() => (window as any).startRewardsTask());
+
+  await expect
+    .poll(() => page.evaluate(() => document.body.dataset.lastCardClick), { timeout: 10_000 })
+    .toBe('/search?q=daily%20poll');
+  await expect
+    .poll(() => page.evaluate(() => document.body.dataset.lastQuery), { timeout: 15_000 })
+    .toBe('daily poll');
+
+  const savedState = await page.evaluate(() => JSON.parse(localStorage.getItem('bing_rewards_auto_searcher_state') || '{}'));
+  expect(savedState.dailyTasksQueue[0]).toMatchObject({
+    title: 'Daily poll',
+    attempts: 2,
+  });
 });
 
 test('restores saved in-progress UI state from localStorage', async ({ page }) => {

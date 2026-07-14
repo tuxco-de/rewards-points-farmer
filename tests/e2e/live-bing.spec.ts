@@ -6,6 +6,10 @@ const userscriptPath = path.resolve(__dirname, '../../dist/rewards-points-farmer
 const storageStatePath = path.resolve(__dirname, '../../playwright/.auth/bing.json');
 const liveUrl = 'https://www.bing.com/search?q=playwright%20smoke';
 const rewardsEntrySelector = '.points-container, #id_rc, #rewards-badge';
+const visibleRewardsEntrySelector = rewardsEntrySelector
+  .split(',')
+  .map(selector => `${selector.trim()}:not(#rh-badge):visible`)
+  .join(', ');
 const rewardsFlyoutSelector = 'iframe[src*="rewards/panelflyout"], iframe#b_rwFlyout, iframe.b_rwFlyout';
 
 test.use({
@@ -33,26 +37,12 @@ async function createLivePage(browser: Browser, options: { worker?: boolean } = 
 }
 
 async function waitForNativeRewardsEntry(page: Page) {
-  await page.waitForFunction(selector => {
-    return Array.from(document.querySelectorAll(selector)).some(el => {
-      return el.id !== 'rh-badge' && el instanceof HTMLElement && el.offsetParent !== null;
-    });
-  }, rewardsEntrySelector);
+  await page.locator(visibleRewardsEntrySelector).first().waitFor({ state: 'visible', timeout: 15_000 });
 }
 
 async function clickNativeRewardsEntry(page: Page) {
   await waitForNativeRewardsEntry(page);
-  await page.evaluate(selector => {
-    const entry = Array.from(document.querySelectorAll(selector)).find(el => {
-      return el.id !== 'rh-badge' && el instanceof HTMLElement && el.offsetParent !== null;
-    }) as HTMLElement | undefined;
-
-    if (!entry) {
-      throw new Error('Native rewards entry was not found.');
-    }
-
-    entry.click();
-  }, rewardsEntrySelector);
+  await page.locator(visibleRewardsEntrySelector).first().click({ timeout: 15_000 });
 }
 
 async function expectSearchNotStarted(page: Page) {

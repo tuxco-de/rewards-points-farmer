@@ -12,7 +12,8 @@ const banner = `// ==UserScript==
 // @description:en  Automatically completes Microsoft Rewards daily search tasks on Bing. Features a configurable UI and mimics human behavior for better safety.
 // @author       ${pkg.author}
 // @match        *://*.bing.com/*
-// @grant        none
+// @grant        GM_registerMenuCommand
+// @inject-into  page
 // @run-at       document-end
 // @license      ${pkg.license}
 // ==/UserScript==`;

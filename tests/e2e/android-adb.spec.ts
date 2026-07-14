@@ -135,14 +135,14 @@ test.describe('Android ADB browser UI @android', () => {
     }
   });
 
-  test('selects card topic keywords on the current ADB device Chrome', async () => {
+  test('selects card topic keywords after points complete on the current ADB device Chrome', async () => {
     const { browser, page } = await connectAndroidChrome({
       isSearching: true,
       currentProgress: {
-        current: 12,
+        current: 90,
         total: 90,
-        lastChecked: 12,
-        completed: false,
+        lastChecked: 90,
+        completed: true,
         noProgressCount: 0,
       },
       usedSearchTerms: [],
@@ -158,7 +158,7 @@ test.describe('Android ADB browser UI @android', () => {
     });
 
     try {
-      await expect(page.locator('#rh-progress-text')).toHaveText('12/90', { timeout: 10_000 });
+      await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 10_000 });
       const term = await page.evaluate(() => (window as any).__e2e_getSearchTerm());
       expect(term).toBe('NASA Artemis mission');
     } finally {

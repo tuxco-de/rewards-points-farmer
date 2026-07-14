@@ -446,8 +446,6 @@ export function getDataFromPanel() {
         if (currentBestProgress) {
             const current = currentBestProgress.current;
             store.currentProgress.total = currentBestProgress.max;
-
-            updateProgressUI();
             console.log('搜索进度: ' + current + '/' + store.currentProgress.total);
 
             if (store.currentProgress.lastChecked > 0 && current <= store.currentProgress.lastChecked && store.isSearching) {
@@ -470,6 +468,8 @@ export function getDataFromPanel() {
                 store.currentProgress.completed = true;
                 console.log(`进度数字表明任务已完成: ${current}/${store.currentProgress.total}`);
             }
+
+            updateProgressUI();
 
             if (store.isSearching) {
                 store.saveState();
@@ -629,39 +629,6 @@ export function getDataFromPanel() {
     } catch (e: any) {
         console.log('读取面板内容出错: ' + e.message);
         return false;
-    }
-}
-
-export async function executeDailyTasksAsync() {
-    try {
-        const iframe = document.querySelector('iframe[src*="rewards/panelflyout"], iframe#b_rwFlyout, iframe.b_rwFlyout') as HTMLIFrameElement;
-        if (!iframe) return;
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (!iframeDoc) return;
-        
-        const cardsArray = discoverCards(iframeDoc);
-        const finalCards = filterCards(cardsArray);
-
-        let hasNewTasks = false;
-        for (let i = 0; i < finalCards.length; i++) {
-            const div = finalCards[i];
-            const status = getCardCompletionStatus(div);
-
-            const task = createDailyTaskFromCard(div, i, status);
-            if (task) {
-                if (status === '未完成' && upsertDailyTask(task)) {
-                    hasNewTasks = true;
-                } else if (status === '已完成') {
-                    removeDailyTask(task);
-                }
-            }
-        }
-        
-        if (hasNewTasks) {
-            console.log(`[RewardsHelper] 已将 ${store.searchState.dailyTasksQueue.length} 个任务加入执行队列`);
-        }
-    } catch (e) {
-        console.log('执行每日任务出错', e);
     }
 }
 

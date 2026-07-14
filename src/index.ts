@@ -1,12 +1,14 @@
 import { config } from './config';
 import { store, sleep, getRandomInterval, STORAGE_KEY } from './state';
-import { createUI, applyCollapseState, applyTheme, updateStatus, showCompletionNotification, setSearchButtonState, updateProgressUI, updateDailyTasksUI, showToast } from './ui';
+import { createUI, applyCollapseState, applyTheme, updateStatus, showCompletionNotification, setSearchButtonState, updateProgressUI, updateDailyTasksUI, showToast, openSettingsPanel } from './ui';
 import { openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent } from './dom';
 import { getDataFromPanel, getSearchTermsFromMainDoc } from './parser';
-import { countdownAsync, simulateScrollingAsync, searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm } from './search';
+import { countdownAsync, simulateScrollingAsync, searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm, getExecutionPhase } from './search';
 import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
 import { consumePendingWorkerCommand, initializeDedicatedWorkerContext, isDedicatedWorkerContext, listenForWorkerCommands, requestDedicatedWorkerStart, requestDedicatedWorkerStop } from './worker';
+
+declare const GM_registerMenuCommand: undefined | ((caption: string, onClick: () => void) => string | number);
 
 declare global {
     interface Window {
@@ -15,6 +17,7 @@ declare global {
         __e2e_performSearch: () => Promise<void>;
         __e2e_simulateTypingAndSearch: (term: string) => Promise<boolean>;
         __e2e_getSearchTerm: () => string;
+        __e2e_getExecutionPhase: () => string;
         __e2e_isDedicatedWorker: () => boolean;
         __e2e_isLocalSearchRunning: () => boolean;
     }
@@ -79,6 +82,13 @@ async function toggleSearchFromCurrentContext() {
     else await startFromCurrentContext();
 }
 
+function registerUserscriptMenuCommands() {
+    if (typeof GM_registerMenuCommand !== 'function') return;
+    GM_registerMenuCommand(t('ui', 'menuStart'), () => { void startFromCurrentContext(); });
+    GM_registerMenuCommand(t('ui', 'menuStop'), stopFromCurrentContext);
+    GM_registerMenuCommand(t('ui', 'menuSettings'), openSettingsPanel);
+}
+
 async function collectRewardsDataInWorker() {
     if (await openRewardsSidebarAsync()) {
         await waitForIframeContent(10000);
@@ -105,8 +115,7 @@ function restoreState() {
         updateStatus(t('status', 'detectedPrev'));
 
         setTimeout(async () => {
-            const hasUnfinishedTasks = store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0;
-            if (!store.currentProgress.completed || hasUnfinishedTasks) {
+            if (getExecutionPhase() !== 'complete') {
                 console.log('恢复搜索状态，继续之前的搜索任务');
                 
                 setSearchButtonState('searching');
@@ -125,14 +134,13 @@ function restoreState() {
                     
                     await closeRewardsSidebarAsync();
                     
-                    if (store.searchState.dailyTasksQueue && store.searchState.dailyTasksQueue.length > 0) {
+                    if (getExecutionPhase() === 'cards' && store.searchState.dailyTasksQueue.length > 0) {
                         updateStatus(t('status', 'executingPanel'));
                         setTimeout(searchLoop, 1000);
                         return;
                     }
                     
-                    const hasUnfinishedDailyTasks = store.dailyTasksData && store.dailyTasksData.some(t => t.status === '未完成');
-                    if (store.currentProgress.completed && !hasUnfinishedDailyTasks) {
+                    if (getExecutionPhase() === 'complete') {
                         showCompletionNotification();
                         updateStatus(t('status', 'allCompleted'));
                         stopAutomatedSearch();
@@ -193,8 +201,10 @@ if (window === window.top) {
         window.__e2e_performSearch = performSearch;
         window.__e2e_simulateTypingAndSearch = simulateTypingAndSearch;
         window.__e2e_getSearchTerm = getSearchTerm;
+        window.__e2e_getExecutionPhase = getExecutionPhase;
         window.__e2e_isDedicatedWorker = isDedicatedWorkerContext;
         window.__e2e_isLocalSearchRunning = () => store.isSearching;
+        registerUserscriptMenuCommands();
 
         if (!dedicatedWorker) {
             syncControllerState();

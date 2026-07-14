@@ -477,6 +477,18 @@ export function createUI(actions: UIActions) {
     }
 }
 
+export function openSettingsPanel() {
+    const badge = document.getElementById('rh-badge');
+    const dropdown = document.getElementById('rh-dropdown');
+    const settingsToggle = document.getElementById('rh-settings-toggle') as HTMLButtonElement | null;
+    const settingsView = document.getElementById('rh-settings-view');
+
+    if (!dropdown || !settingsToggle || !settingsView) return;
+    dropdown.classList.add('show');
+    badge?.setAttribute('aria-expanded', 'true');
+    if (settingsView.hidden) settingsToggle.click();
+}
+
 export function showToast(message: string, duration = 3000) {
     const toast = document.getElementById('rh-toast');
     if (!toast) return;
