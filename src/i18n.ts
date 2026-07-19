@@ -40,10 +40,17 @@ export const messages = {
             maxNoProgressCount: "无进度重试次数",
             saveSettings: "保存设置",
             settingsSaved: "设置已保存",
+            currentVersion: "当前版本",
+            checkUpdates: "检查更新",
+            checkingUpdates: "正在检查...",
+            updateAvailable: (version: string) => `发现新版本 v${version}，请通过脚本管理器更新`,
+            alreadyLatest: (version: string) => `当前已是最新版本 v${version}`,
+            updateCheckFailed: "检查更新失败，请稍后重试",
             dedicatedWorker: "专用任务标签页",
             menuStart: "开始专用任务",
             menuStop: "停止任务",
-            menuSettings: "打开设置"
+            menuSettings: "打开设置",
+            menuCheckUpdates: "检查更新"
         },
         status: {
             detectedPrev: "检测到之前的搜索任务，正在恢复...",
@@ -103,10 +110,17 @@ export const messages = {
             maxNoProgressCount: "No-progress retries",
             saveSettings: "Save settings",
             settingsSaved: "Settings saved",
+            currentVersion: "Current version",
+            checkUpdates: "Check for updates",
+            checkingUpdates: "Checking...",
+            updateAvailable: (version: string) => `Version v${version} is available. Update it in your userscript manager.`,
+            alreadyLatest: (version: string) => `You are using the latest version v${version}`,
+            updateCheckFailed: "Update check failed. Try again later.",
             dedicatedWorker: "Dedicated task tab",
             menuStart: "Start dedicated task",
             menuStop: "Stop task",
-            menuSettings: "Open settings"
+            menuSettings: "Open settings",
+            menuCheckUpdates: "Check for updates"
         },
         status: {
             detectedPrev: "Detected previous task, resuming...",

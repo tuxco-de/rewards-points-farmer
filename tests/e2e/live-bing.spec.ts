@@ -6,12 +6,20 @@ const userscriptPath = path.resolve(__dirname, '../../dist/rewards-points-farmer
 const storageStatePath = path.resolve(__dirname, '../../playwright/.auth/bing.json');
 const cookieHeader = process.env.PLAYWRIGHT_BING_COOKIE_HEADER?.trim() || '';
 const liveUrl = 'https://www.bing.com/search?q=playwright%20smoke';
-const rewardsEntrySelector = '.points-container, #id_rc, #rewards-badge';
+const rewardsEntrySelector = [
+  '#id_rh_w',
+  '[aria-controls="rewid-f"]',
+  'a[role="button"][aria-label*="Microsoft Rewards" i]',
+  'button[aria-label*="Microsoft Rewards" i]',
+  '.points-container',
+  '#id_rc',
+  '#rewards-badge',
+].join(', ');
 const visibleRewardsEntrySelector = rewardsEntrySelector
   .split(',')
   .map(selector => `${selector.trim()}:not(#rh-badge):visible`)
   .join(', ');
-const rewardsFlyoutSelector = 'iframe[src*="rewards/panelflyout"], iframe#b_rwFlyout, iframe.b_rwFlyout';
+const rewardsFlyoutSelector = 'iframe[src*="/rewards/panelflyout"], #rewid-f iframe, iframe[title*="Microsoft Rewards" i], iframe#b_rwFlyout, iframe.b_rwFlyout';
 
 test.use({
   screenshot: 'off',
@@ -75,6 +83,7 @@ async function expectSearchNotStarted(page: Page) {
 }
 
 test.describe('live Bing smoke @live', () => {
+  test.describe.configure({ mode: 'serial' });
   test.skip(
     !cookieHeader && !fs.existsSync(storageStatePath),
     'Provide PLAYWRIGHT_BING_COOKIE_HEADER or run "npm run auth:bing" first.'
@@ -144,8 +153,11 @@ test.describe('live Bing smoke @live', () => {
 
     await page.locator('#rh-badge').click();
     await expect(page.locator('#rh-dropdown')).toBeVisible();
-    await expect(page.locator('#rh-progress-text')).not.toHaveText('0 / 0');
     await expect(page.locator('#rh-tasks-list')).not.toContainText(/Fetching tasks|正在获取任务/);
+    const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
+    expect(queue.flatMap((task: { queryCandidates: string[] }) => task.queryCandidates)).toEqual(
+      expect.not.arrayContaining([expect.stringMatching(/(?:^[a-z][a-z0-9+.-]*:|^\/|bing\.com)/i)])
+    );
     await expectSearchNotStarted(page);
 
     await context.close();

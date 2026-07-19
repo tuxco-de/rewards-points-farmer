@@ -13,6 +13,8 @@ const banner = `// ==UserScript==
 // @author       ${pkg.author}
 // @match        *://*.bing.com/*
 // @grant        GM_registerMenuCommand
+// @updateURL    https://github.com/tuxco-de/rewards-points-farmer/releases/latest/download/rewards-points-farmer.user.js
+// @downloadURL  https://github.com/tuxco-de/rewards-points-farmer/releases/latest/download/rewards-points-farmer.user.js
 // @inject-into  page
 // @run-at       document-end
 // @license      ${pkg.license}
@@ -51,6 +53,9 @@ module.exports = {
     ],
   },
   plugins: [
+    new webpack.DefinePlugin({
+      __SCRIPT_VERSION__: JSON.stringify(pkg.version)
+    }),
     new webpack.BannerPlugin({
       banner: banner,
       raw: true,

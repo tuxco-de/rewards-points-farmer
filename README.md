@@ -3,7 +3,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/tuxco-de/rewards-points-farmer?style=flat-square)](https://github.com/tuxco-de/rewards-points-farmer/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 
-**Rewards Points Farmer** 是一款稳定、智能、安全的 Microsoft Rewards 全自动搜索挂机脚本。它可以帮助你一键全自动完成 PC 端与移动端的搜索任务，自动识别进度并领取积分。
+**Rewards Points Farmer** 是一款稳定、智能、安全的 Microsoft Rewards 全自动搜索挂机脚本。它可以帮助你一键全自动完成 PC 端搜索任务，自动识别进度并领取积分。
 
 ---
 

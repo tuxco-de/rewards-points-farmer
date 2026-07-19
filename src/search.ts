@@ -1,7 +1,7 @@
 import { config } from './config';
 import { DailyTask, getDailyTaskSearchTerm, markDailyTaskSkipped, MAX_DAILY_TASK_ATTEMPTS, recordDailyTaskAttempt, store, sleep, getRandomInterval } from './state';
 import { updateStatus, updateCountdown, showCompletionNotification, setSearchButtonState } from './ui';
-import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent, simulateTypingAndSearch } from './dom';
+import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent, simulateTypingAndSearch, SEARCH_RESULT_SELECTOR } from './dom';
 import { getDataFromPanel, getSearchTermsFromMainDoc, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
 import { t } from './i18n';
 import { isDedicatedWorkerContext } from './worker';
@@ -11,7 +11,7 @@ export async function simulateScrollingAsync() {
     store.searchState.currentAction = 'scrolling';
     
     for (let i = 0; i < 3; i++) {
-        const results = document.querySelectorAll('.b_algo');
+        const results = document.querySelectorAll(SEARCH_RESULT_SELECTOR);
         if (results.length > 0) {
             const randomResult = results[Math.floor(Math.random() * results.length)];
             await simulateMouseInteraction(randomResult);

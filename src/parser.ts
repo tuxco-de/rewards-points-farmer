@@ -1,7 +1,8 @@
 import { config } from './config';
-import { DailyTask, getDailyTaskUrl, isUrlLikeSearchCandidate, removeDailyTask, store, upsertDailyTask } from './state';
+import { DailyTask, getDailyTaskKey, getDailyTaskUrl, isUrlLikeSearchCandidate, removeDailyTask, store, upsertDailyTask } from './state';
 import { updateDailyTasksUI, updateProgressUI } from './ui';
 import { t } from './i18n';
+import { getRewardsFlyoutIframe } from './dom';
 
 export async function fetchOrganicSearchTerms() {
     try {
@@ -22,29 +23,26 @@ export function getSearchTermsFromMainDoc() {
     const terms: string[] = [];
     const currentQ = new URLSearchParams(window.location.search).get('q') || '';
 
-    document.querySelectorAll('.b_vList.b_divsec a[href*="/search?q="]').forEach(a => {
-        const text = a.textContent?.trim() || '';
-        if (text.length > 2 && text.length < 60 && text !== currentQ) {
-            terms.push(text);
-        }
-    });
+    const addTerm = (value: string) => {
+        const text = value.replace(/\s+/g, ' ').trim();
+        if (text.length < 3 || text.length > 80 || text.toLowerCase() === currentQ.toLowerCase()) return;
+        if (isUrlLikeSearchCandidate(text) || /^(?:next|previous|下一页|上一页|更多|more)$/i.test(text)) return;
+        if (!terms.some(term => term.toLowerCase() === text.toLowerCase())) terms.push(text);
+    };
+
+    const relatedSelectors = [
+        '.b_vList.b_divsec a[href*="/search?q="]',
+        '.rslist a[href*="/search?q="]',
+        '.richrsrailsuggestion_text',
+        '#b_results .b_rs a',
+        'main [aria-label*="related" i] a[href*="/search"]',
+        'main [aria-label*="相关"] a[href*="/search"]'
+    ].join(', ');
+    document.querySelectorAll(relatedSelectors).forEach(element => addTerm(element.textContent || ''));
 
     if (terms.length === 0) {
-        document.querySelectorAll('.rslist a[href*="/search?q="]').forEach(a => {
-            const text = a.textContent?.trim() || '';
-            if (text.length > 2 && text.length < 60 && text !== currentQ) {
-                terms.push(text);
-            }
-        });
-    }
-
-    if (terms.length === 0) {
-        const suggestionsContainer = document.querySelector('.richrsrailsugwrapper');
-        if (suggestionsContainer) {
-            suggestionsContainer.querySelectorAll('.richrsrailsuggestion_text').forEach(el => {
-                terms.push(el.textContent?.trim() || '');
-            });
-        }
+        document.querySelectorAll('#b_results h2 a, main[aria-label*="search" i] h2 a, main[aria-label*="搜索"] h2 a')
+            .forEach(element => addTerm(element.textContent || ''));
     }
 
     if (terms.length > 0) {
@@ -73,7 +71,7 @@ export function getSearchTermsFromMainDoc() {
 function discoverCards(doc: Document): Set<Element> {
     const cardsArray = new Set<Element>();
     
-    doc.querySelectorAll('div[aria-label*="Offer"], .promo_cont, .rw-card, .explore-card, .task-card').forEach(el => cardsArray.add(el));
+    doc.querySelectorAll('#exb-activityChecklist .promo_cont, div[aria-label*="Offer" i], [data-task-id], [data-offer-id], .promo_cont, .rw-card, .explore-card, .task-card').forEach(el => cardsArray.add(el));
     
     try {
         const textNodes = doc.createTreeWalker(doc.body || doc, NodeFilter.SHOW_TEXT);
@@ -260,7 +258,7 @@ function getCardDisplayName(card: Element, idx: number): string {
     }
 
     if (!name) {
-        const titleElem = card.querySelector('h3, h4, .title, .rw-card-title, .promo_title, .card-title, div[class*="title"], img[alt]');
+        const titleElem = card.querySelector('h3, h4, .title, .rw-card-title, .promo-title, .promo_title, .card-title, [class*="promo-title"], div[class*="title"], img[alt]');
         if (titleElem && titleElem.tagName.toLowerCase() === 'img') {
             name = titleElem.getAttribute('alt') || '';
         } else if (titleElem && titleElem.textContent?.trim()) {
@@ -286,6 +284,8 @@ function createDailyTaskFromCard(card: Element, idx: number, status: string): Da
     const ariaLabel = card.getAttribute('aria-label') || '';
     const title = getCardDisplayName(card, idx);
     const imgAlt = Array.from(card.querySelectorAll('img[alt]')).map(img => img.getAttribute('alt') || '');
+    const descriptions = Array.from(card.querySelectorAll('.promo-desc, [class*="promo-desc"], .description, [class*="description"]'))
+        .map(element => element.textContent || '');
     const textLines = (card.textContent || '')
         .split('\n')
         .map(l => l.trim())
@@ -295,6 +295,7 @@ function createDailyTaskFromCard(card: Element, idx: number, status: string): Da
         title,
         ariaLabel,
         ...imgAlt,
+        ...descriptions,
         ...textLines
     ]);
 
@@ -309,20 +310,14 @@ function createDailyTaskFromCard(card: Element, idx: number, status: string): Da
     };
 }
 
-function createDailyTaskFromUrl(url: string, title = '', source = 'suggested'): DailyTask | null {
-    const query = getHrefQuery(url);
-    const queryCandidates = getUniqueTaskCandidates([query, title]);
-    const taskTitle = cleanupTaskText(title || query || url);
-    if (!url || !taskTitle) return null;
-    return {
-        url,
-        title: taskTitle,
-        status: '未完成',
-        points: 0,
-        queryCandidates,
-        attempts: 0,
-        source
-    };
+function addIframeSearchTerms(items: any[]): number {
+    const terms = getUniqueTaskCandidates(items.flatMap(item => [
+        getHrefQuery(item?.url || item?.href || ''),
+        String(item?.title || ''),
+        String(item?.text || '')
+    ]));
+    store.iframeSearchTerms = getUniqueTaskCandidates([...store.iframeSearchTerms, ...terms]);
+    return terms.length;
 }
 
 export function getDataFromPanel() {
@@ -330,7 +325,7 @@ export function getDataFromPanel() {
     let isIframe = false;
     let iframeWin: any = window;
 
-    const iframe = (document.querySelector('iframe[src*="rewards/panelflyout"]') || document.querySelector('iframe#b_rwFlyout') || document.querySelector('iframe.b_rwFlyout')) as HTMLIFrameElement;
+    const iframe = getRewardsFlyoutIframe();
     if (iframe) {
         try {
             const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
@@ -357,6 +352,7 @@ export function getDataFromPanel() {
             const tasks: any[] = [];
             const cardsArray = discoverCards(targetDoc);
             const finalCards = filterCards(cardsArray);
+            const observedCardKeys = new Set<string>();
 
             console.log('[RewardsHelper] ======== 开始每日任务卡片解析 ========');
             console.log('[RewardsHelper] 全局扫描找到任务卡片数量:', finalCards.length);
@@ -372,6 +368,7 @@ export function getDataFromPanel() {
                 console.log(`[RewardsHelper] 最终结果 -> 任务名: "${name}", 状态: "${status}"`);
                 
                 if (task) {
+                    observedCardKeys.add(getDailyTaskKey(task));
                     if (status === '未完成') {
                         if (!upsertDailyTask(task)) {
                             console.log(`[RewardsHelper] 任务 "${name}" 已在队列或已跳过`);
@@ -383,6 +380,12 @@ export function getDataFromPanel() {
                 
                 tasks.push({ name, status });
             });
+
+            if (finalCards.length > 0) {
+                store.searchState.dailyTasksQueue = store.searchState.dailyTasksQueue.filter(task =>
+                    task.source !== 'card' || observedCardKeys.has(getDailyTaskKey(task))
+                );
+            }
 
             console.log('\n[RewardsHelper] ======== 任务卡片解析结束 ========');
             console.log('[RewardsHelper] 解析出的最终任务列表:', tasks);
@@ -403,7 +406,7 @@ export function getDataFromPanel() {
                 if (matches) {
                     const cur = parseInt(matches[1], 10);
                     const max = parseInt(matches[2], 10);
-                    if (max >= 12 && max <= 300 && max !== 100 && !txt.toLowerCase().includes('min') && !txt.toLowerCase().includes('level') && !txt.includes('级')) {
+                    if (max >= 12 && max <= 1000 && max !== 100 && !txt.toLowerCase().includes('min') && !txt.toLowerCase().includes('level') && !txt.includes('级')) {
                         
                         let parent = el.parentElement;
                         let contextText = txt;
@@ -464,8 +467,8 @@ export function getDataFromPanel() {
             store.currentProgress.current = current;
             store.currentProgress.lastChecked = current;
 
-            if (current >= store.currentProgress.total) {
-                store.currentProgress.completed = true;
+            store.currentProgress.completed = current >= store.currentProgress.total;
+            if (store.currentProgress.completed) {
                 console.log(`进度数字表明任务已完成: ${current}/${store.currentProgress.total}`);
             }
 
@@ -537,13 +540,10 @@ export function getDataFromPanel() {
                 const vm = iframeWin.flyoutViewModel;
                 const ss = (vm.flyoutResult && vm.flyoutResult.suggestedSearches) || vm.suggestedSearches;
                 if (ss && ss.suggestedItems) {
-                    const urls = ss.suggestedItems.map((item: any) => item.url).filter((u: any) => u);
-                    if (urls.length > 0) {
-                        ss.suggestedItems.forEach((item: any) => {
-                            const task = createDailyTaskFromUrl(item.url, item.title || item.text || '', 'flyoutViewModel');
-                            if (task) upsertDailyTask(task);
-                        });
-                        console.log('从flyoutViewModel变量找到侧边栏卡片任务链接: ' + urls.length + '个，已加入跳转队列');
+                    const found = addIframeSearchTerms(ss.suggestedItems);
+                    if (found > 0) {
+                        iframeTermsFound = true;
+                        console.log('从flyoutViewModel变量找到侧边栏搜索词: ' + found + '个');
                     }
                 }
             }
@@ -571,14 +571,10 @@ export function getDataFromPanel() {
                         const viewModel = JSON.parse(text.substring(braceStart, braceEnd + 1));
                         const ss = (viewModel.flyoutResult && viewModel.flyoutResult.suggestedSearches) || viewModel.suggestedSearches;
                         if (ss && ss.suggestedItems) {
-                            const urls = ss.suggestedItems
-                                .map((item: any) => item.url).filter((u: any) => u);
-                            if (urls.length > 0) {
-                                ss.suggestedItems.forEach((item: any) => {
-                                    const task = createDailyTaskFromUrl(item.url, item.title || item.text || '', 'scriptViewModel');
-                                    if (task) upsertDailyTask(task);
-                                });
-                                console.log('从script标签解析找到iframe卡片任务链接: ' + urls.length + '个，已加入跳转队列');
+                            const found = addIframeSearchTerms(ss.suggestedItems);
+                            if (found > 0) {
+                                iframeTermsFound = true;
+                                console.log('从script标签解析找到侧边栏搜索词: ' + found + '个');
                             }
                         }
                     } catch (parseErr: any) {
@@ -592,20 +588,15 @@ export function getDataFromPanel() {
         }
 
         if (!iframeTermsFound) {
-            const searchTermsContainer = targetDoc.querySelector('.ss_items_wrapper');
-            if (searchTermsContainer) {
-                let found = 0;
-                const links = searchTermsContainer.querySelectorAll('a');
-                links.forEach(a => {
-                    const u = a.getAttribute('href');
-                    const task = u ? createDailyTaskFromUrl(u, a.textContent || '', 'domSearchTerms') : null;
-                    if (task && upsertDailyTask(task)) {
-                        found++;
-                    }
-                });
-                
+            const links = Array.from(targetDoc.querySelectorAll('.ss_items_wrapper a, .search_earn_card a.ss_item, a.richrsrailsuggestion'));
+            if (links.length > 0) {
+                const found = addIframeSearchTerms(links.map(link => ({
+                    url: link.getAttribute('href') || '',
+                    text: link.textContent || ''
+                })));
                 if (found > 0) {
-                    console.log('从DOM结构中提取侧边栏卡片任务链接: ' + found + '个，已加入跳转队列');
+                    iframeTermsFound = true;
+                    console.log('从DOM结构中提取侧边栏搜索词: ' + found + '个');
                 }
             }
         }
@@ -647,7 +638,7 @@ function hrefMatchesTask(href: string | null, taskUrl: string): boolean {
 export async function clickTaskCardAsync(taskOrUrl: DailyTask | string): Promise<boolean> {
     try {
         const url = getDailyTaskUrl(taskOrUrl);
-        const iframe = document.querySelector('iframe[src*="rewards/panelflyout"], iframe#b_rwFlyout, iframe.b_rwFlyout') as HTMLIFrameElement;
+        const iframe = getRewardsFlyoutIframe();
         if (!iframe) return false;
         
         const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;

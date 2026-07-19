@@ -31,7 +31,7 @@ type SavedState = {
 async function loadUserscriptFixture(
   page: Page,
   savedState?: SavedState,
-  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean } = {}
+  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean } = {}
 ) {
   if (savedState) {
     await page.context().addInitScript(state => {
@@ -60,6 +60,7 @@ async function loadUserscriptFixture(
   const url = new URL(fixtureUrl);
   if (options.worker) url.searchParams.set('rewards_helper_worker', '1');
   if (options.pointsComplete) url.searchParams.set('pointsComplete', '1');
+  if (options.modernLayout) url.searchParams.set('modernLayout', '1');
   await page.goto(url.toString());
   await page.waitForFunction(() => typeof (window as any).startRewardsTask === 'function');
 }
@@ -130,13 +131,36 @@ test('opens settings and persists configuration across reloads', async ({ page }
   await expect(page.locator('#rh-max-no-progress')).toHaveValue('5');
 });
 
+test('checks the latest release from the settings panel', async ({ page }) => {
+  await page.route('https://api.github.com/repos/tuxco-de/rewards-points-farmer/releases/latest', route =>
+    route.fulfill({
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({
+        tag_name: 'v9.9.9',
+        html_url: 'https://github.com/tuxco-de/rewards-points-farmer/releases/tag/v9.9.9',
+      }),
+    })
+  );
+  await loadUserscriptFixture(page);
+
+  await page.locator('#rh-badge').click();
+  await page.locator('#rh-settings-toggle').click();
+  await expect(page.locator('#rh-settings-view')).toContainText('Current version: v1.4.0');
+  await page.locator('#rh-check-updates').click();
+
+  await expect(page.locator('#rh-toast')).toContainText('Version v9.9.9 is available');
+  await expect(page.locator('#rh-check-updates')).toHaveText('Check for updates');
+  await expect(page.locator('#rh-check-updates')).toBeEnabled();
+});
+
 test('registers regular actions in the userscript menu', async ({ page }) => {
   await loadUserscriptFixture(page, undefined, { menuApi: true });
 
   const captions = await page.evaluate(() =>
     (window as any).__e2e_menuCommands.map((command: { caption: string }) => command.caption)
   );
-  expect(captions).toEqual(['Start dedicated task', 'Stop task', 'Open settings']);
+  expect(captions).toEqual(['Start dedicated task', 'Stop task', 'Open settings', 'Check for updates']);
 
   await page.evaluate(() => {
     const settingsCommand = (window as any).__e2e_menuCommands.find(
@@ -229,6 +253,23 @@ test('injects the userscript UI and parses the rewards flyout', async ({ page })
   await expect(page.locator('#rh-tasks-list')).toContainText('NASA Artemis mission');
 });
 
+test('parses the redesigned Rewards entry, progress and promo cards', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true });
+
+  await expect(page.locator('#id_rh_w')).toHaveAttribute('aria-controls', 'rewid-f');
+  await expect(page.locator('#rh-progress-text')).toHaveText('0/200', { timeout: 6_000 });
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');
+  await expect(page.locator('.rh-task-item').first()).toContainText('查找住宿地点');
+  await expect(page.locator('.rh-task-item').nth(1)).toContainText('NASA Artemis mission');
+
+  const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
+  expect(queue).toHaveLength(2);
+  expect(queue.map((task: { source: string }) => task.source)).toEqual(['card', 'card']);
+  expect(queue.flatMap((task: { queryCandidates: string[] }) => task.queryCandidates)).toEqual(
+    expect.not.arrayContaining([expect.stringMatching(/(?:https?:\/\/|bing\.com|^\/search)/i)])
+  );
+});
+
 test('renders parsed task state in the dropdown task list', async ({ page }) => {
   await loadUserscriptFixture(page, undefined, { worker: true });
 
@@ -315,11 +356,11 @@ test('uses card topic keywords only after search points are complete', async ({ 
 
 test('executes a card click and searches its title when the card query is a URL', async ({ page }) => {
   test.setTimeout(45_000);
-  await loadUserscriptFixture(page, undefined, { worker: true, pointsComplete: true });
+  await loadUserscriptFixture(page, undefined, { worker: true, pointsComplete: true, modernLayout: true });
 
   await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
   await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');
-  await expect(page.locator('#b_rwFlyout')).toHaveCount(0);
+  await expect(page.locator('#rewid-f')).toHaveCount(0);
 
   await page.evaluate(() => (window as any).startRewardsTask());
 
@@ -328,11 +369,11 @@ test('executes a card click and searches its title when the card query is a URL'
     .toBe('/search?q=https%3A%2F%2Fwww.bing.com%2Frewards');
   await expect
     .poll(() => page.evaluate(() => document.body.dataset.lastQuery), { timeout: 25_000 })
-    .toBe('Daily poll');
+    .toBe('查找住宿地点');
 
   const savedState = await page.evaluate(() => JSON.parse(localStorage.getItem('bing_rewards_auto_searcher_state') || '{}'));
   expect(savedState.dailyTasksQueue[0]).toMatchObject({
-    title: 'Daily poll',
+    title: '查找住宿地点',
     attempts: 2,
   });
   expect(savedState.dailyTasksQueue[0].queryCandidates).toEqual(
@@ -395,4 +436,19 @@ test('exposes an e2e hook that can submit through the Bing search form', async (
   await expect
     .poll(() => page.evaluate(() => document.body.dataset.lastQuery))
     .toBe('playwright check');
+});
+
+test('submits through the redesigned semantic Bing search form', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, { modernLayout: true });
+
+  await expect(page.locator('#sb_form_q')).toHaveCount(0);
+  await expect(page.locator('#sb_form_go')).toHaveCount(0);
+  const submitted = await page.evaluate(() =>
+    (window as any).__e2e_simulateTypingAndSearch('modern playwright check')
+  );
+
+  expect(submitted).toBe(true);
+  await expect
+    .poll(() => page.evaluate(() => document.body.dataset.lastQuery))
+    .toBe('modern playwright check');
 });

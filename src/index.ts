@@ -7,6 +7,7 @@ import { countdownAsync, simulateScrollingAsync, searchLoop, stopAutomatedSearch
 import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
 import { consumePendingWorkerCommand, initializeDedicatedWorkerContext, isDedicatedWorkerContext, listenForWorkerCommands, requestDedicatedWorkerStart, requestDedicatedWorkerStop } from './worker';
+import { checkForUpdates } from './update';
 
 declare const GM_registerMenuCommand: undefined | ((caption: string, onClick: () => void) => string | number);
 
@@ -88,16 +89,39 @@ function registerUserscriptMenuCommands() {
     GM_registerMenuCommand(t('ui', 'menuStart'), () => { void startFromCurrentContext(); });
     GM_registerMenuCommand(t('ui', 'menuStop'), stopFromCurrentContext);
     GM_registerMenuCommand(t('ui', 'menuSettings'), openSettingsPanel);
+    GM_registerMenuCommand(t('ui', 'menuCheckUpdates'), () => { void checkForUpdatesAndNotify(); });
+}
+
+async function checkForUpdatesAndNotify() {
+    try {
+        const result = await checkForUpdates();
+        showToast(
+            result.updateAvailable
+                ? t('ui', 'updateAvailable', result.latestVersion)
+                : t('ui', 'alreadyLatest', result.currentVersion),
+            result.updateAvailable ? 7000 : 3500
+        );
+    } catch (error) {
+        console.warn('[RewardsHelper] 检查更新失败:', error);
+        showToast(t('ui', 'updateCheckFailed'), 5000);
+    }
 }
 
 async function collectRewardsDataInWorker() {
+    let panelParsed = false;
     if (await openRewardsSidebarAsync()) {
         await waitForIframeContent(10000);
-        getDataFromPanel();
+        panelParsed = getDataFromPanel();
         getSearchTermsFromMainDoc();
         await closeRewardsSidebarAsync();
     } else {
         getSearchTermsFromMainDoc();
+    }
+
+    if (!panelParsed) {
+        store.dailyTasksData = [];
+        updateDailyTasksUI([]);
+        console.log('[RewardsHelper] Rewards 侧栏不可用，已使用主搜索页数据完成只读初始化');
     }
 }
 
@@ -193,7 +217,8 @@ if (window === window.top) {
         store.loadConfig();
         createUI({
             isWorker: dedicatedWorker,
-            onToggleSearch: toggleSearchFromCurrentContext
+            onToggleSearch: toggleSearchFromCurrentContext,
+            onCheckForUpdates: checkForUpdatesAndNotify
         });
         applyCollapseState();
 

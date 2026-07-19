@@ -2,10 +2,12 @@ import { config } from './config';
 import { store } from './state';
 import { isDarkMode } from './dom';
 import { t } from './i18n';
+import { CURRENT_VERSION } from './update';
 
 export interface UIActions {
     isWorker: boolean;
     onToggleSearch: () => void | Promise<void>;
+    onCheckForUpdates: () => Promise<void>;
 }
 
 export function injectStyles() {
@@ -204,6 +206,11 @@ export function injectStyles() {
         .rh-btn:hover { opacity: 0.9; }
         .rh-btn:active { transform: scale(0.98); }
         .rh-btn.danger { background: var(--rh-danger); }
+        .rh-btn.secondary {
+            background: transparent;
+            border: 1px solid var(--rh-border);
+            color: var(--rh-text);
+        }
         .rh-settings-field {
             display: flex;
             flex-direction: column;
@@ -379,6 +386,10 @@ export function createUI(actions: UIActions) {
                     <input id="rh-max-no-progress" class="rh-input" type="number" min="1" max="20" step="1">
                 </div>
                 <button id="rh-save-settings" class="rh-btn" type="button">${t('ui', 'saveSettings')}</button>
+                <div class="rh-settings-field">
+                    <span class="rh-settings-label">${t('ui', 'currentVersion')}: v${CURRENT_VERSION}</span>
+                    <button id="rh-check-updates" class="rh-btn secondary" type="button">${t('ui', 'checkUpdates')}</button>
+                </div>
             </div>
         </div>
     `;
@@ -462,6 +473,20 @@ export function createUI(actions: UIActions) {
             store.saveConfig();
             showSettings(false);
             showToast(t('ui', 'settingsSaved'));
+        };
+    }
+
+    const checkUpdatesBtn = document.getElementById('rh-check-updates') as HTMLButtonElement | null;
+    if (checkUpdatesBtn) {
+        checkUpdatesBtn.onclick = async () => {
+            checkUpdatesBtn.disabled = true;
+            checkUpdatesBtn.textContent = t('ui', 'checkingUpdates');
+            try {
+                await actions.onCheckForUpdates();
+            } finally {
+                checkUpdatesBtn.disabled = false;
+                checkUpdatesBtn.textContent = t('ui', 'checkUpdates');
+            }
         };
     }
 

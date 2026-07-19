@@ -23,7 +23,8 @@
         padding: 24px;
       }
 
-      #b_rwFlyout {
+      #b_rwFlyout,
+      #rewid-f iframe {
         border: 0;
         height: 360px;
         position: absolute;
@@ -55,10 +56,13 @@
     </main>
 
     <script>
-      const searchProgress = new URLSearchParams(window.location.search).get('pointsComplete') === '1'
-        ? '90 / 90'
-        : '0 / 90';
-      const flyoutMarkup = `
+      const params = new URLSearchParams(window.location.search);
+      const modernLayout = params.get('modernLayout') === '1';
+      const pointsComplete = params.get('pointsComplete') === '1';
+      const searchProgress = pointsComplete
+        ? (modernLayout ? '200 / 200' : '90 / 90')
+        : (modernLayout ? '0 / 200' : '0 / 90');
+      const legacyFlyoutMarkup = `
         <!doctype html>
         <html>
           <body>
@@ -80,32 +84,101 @@
             </section>
           </body>
         </html>`;
+      const modernFlyoutMarkup = `
+        <!doctype html>
+        <html>
+          <body>
+            <main id="app" aria-label="Microsoft Rewards">
+              <section class="flyout_exb_card">
+                <div class="search_earn_card">
+                  <span>每日搜索</span>
+                  <span>${searchProgress}</span>
+                </div>
+                <div id="exb-activityChecklist">
+                  <div class="promo_cont">
+                    <a class="block" href="/search?q=https%3A%2F%2Fwww.bing.com%2Frewards">
+                      <p class="promo-title">查找住宿地点</p>
+                      <div class="shortPoint point" aria-label="10 积分">10</div>
+                      <div class="promo-desc">在 Bing 上搜索适合周末旅行的住宿地点</div>
+                    </a>
+                  </div>
+                  <div class="promo_cont">
+                    <a class="block" href="/rewards/task/nasa-artemis">
+                      <p class="promo-title">NASA Artemis mission</p>
+                      <div class="shortPoint point" aria-label="10 积分">10</div>
+                      <div class="promo-desc">Search Bing for NASA Artemis mission</div>
+                    </a>
+                  </div>
+                </div>
+                <div class="ss_items_wrapper">
+                  <a class="ss_item" href="/search?q=summer+travel">summer travel</a>
+                  <a class="ss_item" href="/search?q=technology+news">technology news</a>
+                </div>
+              </section>
+            </main>
+          </body>
+        </html>`;
 
-      document.getElementById('rewards-badge').addEventListener('click', () => {
-        const existing = document.getElementById('b_rwFlyout');
+      const rewardsBadge = document.getElementById('rewards-badge');
+      const searchForm = document.getElementById('sb_form');
+      const searchInput = document.getElementById('sb_form_q');
+      const searchButton = document.getElementById('sb_form_go');
+
+      if (modernLayout) {
+        rewardsBadge.id = 'id_rh_w';
+        rewardsBadge.className = '';
+        rewardsBadge.setAttribute('role', 'button');
+        rewardsBadge.setAttribute('aria-label', 'Microsoft Rewards');
+        rewardsBadge.setAttribute('aria-controls', 'rewid-f');
+        rewardsBadge.setAttribute('aria-expanded', 'false');
+        searchForm.id = 'modern-search-form';
+        searchForm.action = '/search';
+        searchInput.id = 'modern-search-input';
+        searchInput.type = 'search';
+        searchInput.setAttribute('role', 'searchbox');
+        searchButton.id = 'modern-search-submit';
+      }
+
+      rewardsBadge.addEventListener('click', () => {
+        const existing = document.getElementById(modernLayout ? 'rewid-f' : 'b_rwFlyout');
         if (existing) {
           existing.remove();
+          rewardsBadge.setAttribute('aria-expanded', 'false');
           return;
         }
 
         const iframe = document.createElement('iframe');
-        iframe.id = 'b_rwFlyout';
-        iframe.srcdoc = flyoutMarkup;
+        if (modernLayout) {
+          iframe.src = '/rewards/panelflyout?channel=bing';
+          iframe.title = 'Microsoft Rewards, expanded';
+        } else {
+          iframe.id = 'b_rwFlyout';
+        }
+        iframe.srcdoc = modernLayout ? modernFlyoutMarkup : legacyFlyoutMarkup;
         iframe.addEventListener('load', () => {
           iframe.contentDocument.addEventListener('click', event => {
-            const card = event.target.closest('.rw-card');
+            const card = event.target.closest('.rw-card, .promo_cont a');
             if (!card) return;
             event.preventDefault();
             document.body.dataset.lastCardClick = card.getAttribute('href');
             document.body.dataset.cardClickCount = String(Number(document.body.dataset.cardClickCount || 0) + 1);
           });
         });
-        document.body.appendChild(iframe);
+        if (modernLayout) {
+          const flyout = document.createElement('div');
+          flyout.id = 'rewid-f';
+          flyout.setAttribute('role', 'dialog');
+          flyout.appendChild(iframe);
+          document.body.appendChild(flyout);
+        } else {
+          document.body.appendChild(iframe);
+        }
+        rewardsBadge.setAttribute('aria-expanded', 'true');
       });
 
-      document.getElementById('sb_form').addEventListener('submit', event => {
+      searchForm.addEventListener('submit', event => {
         event.preventDefault();
-        document.body.dataset.lastQuery = document.getElementById('sb_form_q').value;
+        document.body.dataset.lastQuery = searchInput.value;
       });
     </script>
   </body>
