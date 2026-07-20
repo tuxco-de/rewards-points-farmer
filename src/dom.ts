@@ -99,6 +99,23 @@ export async function simulateMouseInteraction(element: Element) {
     }
 }
 
+function clickRewardsEntry(element: HTMLElement) {
+    const anchor = element.closest('a[href]') as HTMLAnchorElement | null;
+    if (!anchor) {
+        element.click();
+        return;
+    }
+
+    const preventNavigation = (event: Event) => event.preventDefault();
+    anchor.addEventListener('click', preventNavigation, { capture: true, once: true });
+    element.dispatchEvent(new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window
+    }));
+}
+
 export function isDarkMode() {
     const html = document.documentElement;
     if (html.classList.contains('b_dark') || document.body?.classList.contains('b_dark')) return true;
@@ -113,7 +130,7 @@ export async function closeRewardsSidebarAsync() {
         if (iframe) {
             const pointsContainer = findVisibleElement(REWARDS_ENTRY_SELECTOR);
             if (pointsContainer) {
-                pointsContainer.click();
+                clickRewardsEntry(pointsContainer);
                 console.log('已点击积分按钮，关闭侧边栏');
                 await sleep(1000);
             }
@@ -129,7 +146,7 @@ export async function openRewardsSidebarAsync() {
 
     const pointsContainer = await waitForVisibleElement(REWARDS_ENTRY_SELECTOR, 5000);
     if (pointsContainer) {
-        pointsContainer.click();
+        clickRewardsEntry(pointsContainer);
         console.log('已点击积分按钮，正在打开侧边栏...');
         return Boolean(await waitForElement(REWARDS_FLYOUT_SELECTOR, 5000));
     } else {

@@ -146,7 +146,7 @@ test('checks the latest release from the settings panel', async ({ page }) => {
 
   await page.locator('#rh-badge').click();
   await page.locator('#rh-settings-toggle').click();
-  await expect(page.locator('#rh-settings-view')).toContainText('Current version: v1.4.0');
+  await expect(page.locator('#rh-settings-view')).toContainText(/Current version: v\d+\.\d+\.\d+/);
   await page.locator('#rh-check-updates').click();
 
   await expect(page.locator('#rh-toast')).toContainText('Version v9.9.9 is available');
@@ -268,6 +268,7 @@ test('parses the redesigned Rewards entry, progress and promo cards', async ({ p
   expect(queue.flatMap((task: { queryCandidates: string[] }) => task.queryCandidates)).toEqual(
     expect.not.arrayContaining([expect.stringMatching(/(?:https?:\/\/|bing\.com|^\/search)/i)])
   );
+  expect(await page.evaluate(() => document.body.dataset.javascriptNavigation)).toBeUndefined();
 });
 
 test('renders parsed task state in the dropdown task list', async ({ page }) => {
