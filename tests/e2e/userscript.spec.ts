@@ -31,7 +31,7 @@ type SavedState = {
 async function loadUserscriptFixture(
   page: Page,
   savedState?: SavedState,
-  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean } = {}
+  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean } = {}
 ) {
   if (savedState) {
     await page.context().addInitScript(state => {
@@ -53,6 +53,18 @@ async function loadUserscriptFixture(
         (window as any).__e2e_menuCommands.push({ caption, onClick });
         return caption;
       };
+    });
+  }
+
+  if (options.rejectMouseEventView) {
+    await page.context().addInitScript(() => {
+      const NativeMouseEvent = window.MouseEvent;
+      window.MouseEvent = new Proxy(NativeMouseEvent, {
+        construct(target, args) {
+          if (args[1]?.view) throw new TypeError('MouseEvent view must be a native Window');
+          return Reflect.construct(target, args);
+        },
+      });
     });
   }
 
@@ -254,7 +266,7 @@ test('injects the userscript UI and parses the rewards flyout', async ({ page })
 });
 
 test('parses the redesigned Rewards entry, progress and promo cards', async ({ page }) => {
-  await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true });
+  await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true, rejectMouseEventView: true });
 
   await expect(page.locator('#id_rh_w')).toHaveAttribute('aria-controls', 'rewid-f');
   await expect(page.locator('#rh-progress-text')).toHaveText('0/200', { timeout: 6_000 });
@@ -357,7 +369,7 @@ test('uses card topic keywords only after search points are complete', async ({ 
 
 test('executes a card click and searches its title when the card query is a URL', async ({ page }) => {
   test.setTimeout(45_000);
-  await loadUserscriptFixture(page, undefined, { worker: true, pointsComplete: true, modernLayout: true });
+  await loadUserscriptFixture(page, undefined, { worker: true, pointsComplete: true, modernLayout: true, rejectMouseEventView: true });
 
   await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
   await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');

@@ -90,9 +90,9 @@ export async function simulateMouseInteraction(element: Element) {
         const targetX = rect.left + rect.width / 2 + (Math.random() * 10 - 5);
         const targetY = rect.top + rect.height / 2 + (Math.random() * 10 - 5);
         
-        element.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, view: window, clientX: targetX, clientY: targetY, screenX: targetX, screenY: targetY }));
+        element.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: targetX, clientY: targetY, screenX: targetX, screenY: targetY }));
         await sleep(100 + Math.random() * 200);
-        element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window, clientX: targetX, clientY: targetY, screenX: targetX, screenY: targetY }));
+        element.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: targetX, clientY: targetY, screenX: targetX, screenY: targetY }));
         await sleep(50 + Math.random() * 100);
     } catch (e) {
         console.warn('模拟鼠标交互出错:', e);
@@ -111,8 +111,7 @@ function clickRewardsEntry(element: HTMLElement) {
     element.dispatchEvent(new MouseEvent('click', {
         bubbles: true,
         cancelable: true,
-        composed: true,
-        view: window
+        composed: true
     }));
 }
 

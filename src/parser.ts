@@ -654,7 +654,7 @@ export async function clickTaskCardAsync(taskOrUrl: DailyTask | string): Promise
             if (rect.width > 0 && rect.height > 0) {
                 const targetX = rect.left + rect.width / 2;
                 const targetY = rect.top + rect.height / 2;
-                const eventOptions = { bubbles: true, cancelable: true, clientX: targetX, clientY: targetY, view: iframe.contentWindow || window };
+                const eventOptions = { bubbles: true, cancelable: true, clientX: targetX, clientY: targetY };
 
                 let clickTarget: Element = targetElem;
                 if (iframeDoc.elementFromPoint) {
