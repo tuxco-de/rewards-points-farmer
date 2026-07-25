@@ -177,6 +177,7 @@
       }
 
       rewardsBadge.addEventListener('click', () => {
+        document.body.dataset.rewardsToggleCount = String(Number(document.body.dataset.rewardsToggleCount || 0) + 1);
         const existing = document.getElementById(modernLayout ? 'rewid-f' : 'b_rwFlyout');
         if (existing) {
           existing.remove();

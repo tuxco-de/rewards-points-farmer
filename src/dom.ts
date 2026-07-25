@@ -119,6 +119,13 @@ export async function closeRewardsSidebarAsync() {
     try {
         const iframe = getRewardsFlyoutIframe();
         if (iframe) {
+            const isReactFlyout = Boolean(iframe.closest('#rewid-f')) ||
+                iframe.src.includes('/rewards/panelflyout');
+            if (isReactFlyout) {
+                console.log('[RewardsHelper] 新版 Rewards flyout 保持打开，避免触发 Bing React 关闭异常');
+                return;
+            }
+
             const pointsContainer = findVisibleElement(REWARDS_ENTRY_SELECTOR);
             if (pointsContainer) {
                 clickRewardsEntry(pointsContainer);

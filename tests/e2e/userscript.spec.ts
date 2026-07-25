@@ -330,6 +330,7 @@ test('parses the redesigned Rewards entry, progress and promo cards', async ({ p
   expect(queue.flatMap((task: { searchTerms: string[] }) => task.searchTerms)).toEqual(
     expect.not.arrayContaining([expect.stringMatching(/(?:https?:\/\/|bing\.com|^\/search)/i)])
   );
+  expect(await page.evaluate(() => document.body.dataset.rewardsToggleCount)).toBe('1');
   expect(await page.evaluate(() => document.body.dataset.javascriptNavigation)).toBeUndefined();
 });
 
@@ -477,7 +478,7 @@ test('executes a search promotion with its first fixed term when the card query 
 
   await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
   await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');
-  await expect(page.locator('#rewid-f')).toHaveCount(0);
+  await expect(page.locator('#rewid-f')).toHaveCount(1);
 
   await page.evaluate(() => (window as any).startRewardsTask());
 
