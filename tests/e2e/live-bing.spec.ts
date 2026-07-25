@@ -155,7 +155,7 @@ test.describe('live Bing smoke @live', () => {
     await expect(page.locator('#rh-dropdown')).toBeVisible();
     await expect(page.locator('#rh-tasks-list')).not.toContainText(/Fetching tasks|正在获取任务/);
     const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
-    expect(queue.flatMap((task: { queryCandidates: string[] }) => task.queryCandidates)).toEqual(
+    expect(queue.flatMap((task: { searchTerms: string[] }) => task.searchTerms)).toEqual(
       expect.not.arrayContaining([expect.stringMatching(/(?:^[a-z][a-z0-9+.-]*:|^\/|bing\.com)/i)])
     );
     await expectSearchNotStarted(page);
@@ -169,7 +169,10 @@ test.describe('live Bing smoke @live', () => {
     const { context, page } = await createLivePage(browser, { worker: true });
 
     try {
-      let liveState: { phase: string; queue: Array<{ title: string; queryCandidates: string[] }> } | null = null;
+      let liveState: {
+        phase: string;
+        queue: Array<{ title: string; kind: 'search-promotion' | 'navigation'; searchTerms: string[] }>;
+      } | null = null;
       await expect
         .poll(async () => {
           const state = await page.evaluate(() => {
@@ -190,8 +193,11 @@ test.describe('live Bing smoke @live', () => {
         test.skip(true, 'Live account has no executable card after search points are complete.');
       }
 
-      const initialTask = liveState.queue[0];
-      expect(initialTask.queryCandidates).not.toEqual(
+      const initialTask = liveState.queue.find(task => task.kind === 'search-promotion');
+      if (!initialTask) {
+        test.skip(true, 'Live account has no search-promotion card with fixed terms.');
+      }
+      expect(initialTask!.searchTerms).not.toEqual(
         expect.arrayContaining([expect.stringMatching(/(?:^[a-z][a-z0-9+.-]*:|^\/|bing\.com)/i)])
       );
 

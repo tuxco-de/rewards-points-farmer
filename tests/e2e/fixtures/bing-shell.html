@@ -59,18 +59,34 @@
       const params = new URLSearchParams(window.location.search);
       const modernLayout = params.get('modernLayout') === '1';
       const pointsComplete = params.get('pointsComplete') === '1';
+      const englishSummary = params.get('englishSummary') === '1';
+      const claimablePoints = params.get('claimablePoints') === '1';
+      const hundredTotal = params.get('hundredTotal') === '1';
+      const completedCard = params.get('completedCard') === '1';
       const searchProgress = pointsComplete
         ? (modernLayout ? '200 / 200' : '90 / 90')
-        : (modernLayout ? '0 / 200' : '0 / 90');
+        : (hundredTotal ? '0 / 100' : (modernLayout ? '0 / 200' : '0 / 90'));
+      const legacyProgressMarkup = englishSummary
+        ? `<div class="earned-summary">
+             <p>You earned</p>
+             <p>80 points already</p>
+             <p>Keep searching to earn up to</p>
+             <p>200 points today</p>
+           </div>
+           <div>
+             <span>Other activity progress</span>
+             <span>80 / 80</span>
+           </div>`
+        : `<div>
+             <span>PC search progress</span>
+             <span>${searchProgress}</span>
+           </div>`;
       const legacyFlyoutMarkup = `
         <!doctype html>
         <html>
           <body>
             <section aria-label="Rewards panel">
-              <div>
-                <span>PC search progress</span>
-                <span>${searchProgress}</span>
-              </div>
+              ${legacyProgressMarkup}
 
               <a class="rw-card" aria-label="Daily poll - 10 points" href="/search?q=https%3A%2F%2Fwww.bing.com%2Frewards">
                 <span class="point" aria-label="10 points">+10</span>
@@ -102,7 +118,7 @@
                       <div class="promo-desc">在 Bing 上搜索适合周末旅行的住宿地点</div>
                     </a>
                   </div>
-                  <div class="promo_cont">
+                  <div class="promo_cont" ${completedCard ? 'aria-label="NASA Artemis mission is completed"' : ''}>
                     <a class="block" href="/rewards/task/nasa-artemis">
                       <p class="promo-title">NASA Artemis mission</p>
                       <div class="shortPoint point" aria-label="10 积分">10</div>
@@ -123,6 +139,27 @@
       const searchForm = document.getElementById('sb_form');
       const searchInput = document.getElementById('sb_form_q');
       const searchButton = document.getElementById('sb_form_go');
+
+      if (claimablePoints) {
+        const claimSection = document.createElement('section');
+        claimSection.id = 'claimable-points';
+        claimSection.innerHTML = `
+          <button type="button" data-claim-control>Claim 10 points</button>
+          <button type="button" data-claim-control>Claim now</button>
+          <button type="button" data-claim-control>领取</button>
+          <a href="/redeem" data-redeem-control>Redeem reward</a>`;
+        claimSection.querySelectorAll('[data-claim-control]').forEach(control => {
+          control.addEventListener('click', () => {
+            document.body.dataset.claimedPoints = String(Number(document.body.dataset.claimedPoints || 0) + 1);
+            control.remove();
+          });
+        });
+        claimSection.querySelector('[data-redeem-control]').addEventListener('click', event => {
+          event.preventDefault();
+          document.body.dataset.redeemClicked = '1';
+        });
+        document.body.appendChild(claimSection);
+      }
 
       if (modernLayout) {
         rewardsBadge.id = 'id_rh_w';

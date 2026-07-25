@@ -40,6 +40,22 @@
 本项目使用 TypeScript 编写并利用 Webpack 构建和 Jest 单元测试。
 如果您希望二次开发：
 
+### 自定义搜索推广卡词表
+
+搜索推广卡的固定搜索词保存在 [`config/search-promotion-terms.json`](config/search-promotion-terms.json)。
+JSON 的键是卡片标题或描述中的匹配文字，值是该卡片依次使用的搜索词数组：
+
+```json
+{
+  "NASA Artemis mission": [
+    "NASA Artemis mission",
+    "Artemis II launch"
+  ]
+}
+```
+
+匹配不区分大小写，优先匹配完整标题，其次匹配标题或描述中包含的文字；多个关键词同时命中时优先采用更长、更具体的关键词。同一卡片可以配置多个搜索词，非字符串或无效搜索词会被忽略；没有命中配置的卡片会继续使用页面中提取到的搜索词。修改后需要执行 `npm run build` 重新生成用户脚本。
+
 ```bash
 # 1. 安装依赖
 npm install

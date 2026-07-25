@@ -74,7 +74,12 @@ export const messages = {
             popupBlocked: "无法打开专用任务标签页，请允许此站点打开弹窗",
             stopRequested: "已通知专用任务标签页停止",
             runningInWorker: "任务正在专用标签页中执行",
-            pointsFirst: "优先完成搜索积分任务..."
+            pointsFirst: "优先完成搜索积分任务...",
+            waitingPanelRetry: "等待重新读取 Rewards 面板...",
+            safetyStopped: (count: number) => `已达到 ${count} 次搜索安全上限，任务已停止`,
+            panelFailuresStopped: (count: number) => `连续 ${count} 次无法读取 Rewards 面板，任务已停止`,
+            repeatedNoProgressStopped: (count: number) => `连续完成 ${count} 轮休息后仍无进度，任务已停止`,
+            runtimeErrorStopped: "任务发生运行错误，已安全停止"
         },
         parser: {
             completed: "已完成",
@@ -144,7 +149,12 @@ export const messages = {
             popupBlocked: "Unable to open the dedicated task tab. Allow pop-ups for this site.",
             stopRequested: "The dedicated task tab was asked to stop",
             runningInWorker: "Task is running in the dedicated tab",
-            pointsFirst: "Completing search points first..."
+            pointsFirst: "Completing search points first...",
+            waitingPanelRetry: "Waiting to retry the Rewards panel...",
+            safetyStopped: (count: number) => `Stopped after reaching the ${count}-search safety limit`,
+            panelFailuresStopped: (count: number) => `Stopped after ${count} consecutive Rewards panel failures`,
+            repeatedNoProgressStopped: (count: number) => `Stopped after ${count} rest cycles without progress`,
+            runtimeErrorStopped: "Stopped safely after a runtime error"
         },
         parser: {
             completed: "Completed",

@@ -1,8 +1,66 @@
 import { config } from './config';
-import { DailyTask, getDailyTaskKey, getDailyTaskUrl, isUrlLikeSearchCandidate, removeDailyTask, store, upsertDailyTask } from './state';
+import { DailyTask, getDailyTaskKey, isUrlLikeSearchCandidate, removeDailyTask, store, upsertDailyTask } from './state';
 import { updateDailyTasksUI, updateProgressUI } from './ui';
 import { t } from './i18n';
 import { getRewardsFlyoutIframe } from './dom';
+import searchPromotionTerms from '../config/search-promotion-terms.json';
+import { isBingHost, normalizeBingTaskUrl } from './navigation';
+
+interface EarnedProgress {
+    current: number;
+    total: number;
+    completed: boolean;
+    rule: string;
+}
+
+export function parseEarnedProgressText(value: string): EarnedProgress | null {
+    const text = value.replace(/\s+/g, ' ').trim();
+    if (!text) return null;
+
+    const incompleteRules = [
+        {
+            rule: 'earned_zh',
+            match: /你已获得\s*(\d+)\s*积分.{0,300}?每天继续搜索并获得最多\s*(\d+)\s*积分/
+        },
+        {
+            rule: 'earned_en',
+            match: /You earned\s*(\d+)\s*points?(?:\s+already)?.{0,300}?(?:earn|get)\s+up\s+to\s*(\d+)\s*points?/i
+        }
+    ];
+
+    for (const { rule, match: pattern } of incompleteRules) {
+        const match = text.match(pattern);
+        if (!match) continue;
+        const current = parseInt(match[1], 10);
+        const total = parseInt(match[2], 10);
+        return {
+            current,
+            total,
+            completed: current >= total,
+            rule
+        };
+    }
+
+    const completedRules = [
+        {
+            rule: 'completed_zh',
+            match: /你已获得\s*(\d+)\s*积分.{0,120}?(?:今日|每天|每日).{0,30}?搜索.{0,30}?(?:已完成|全部完成)/
+        },
+        {
+            rule: 'completed_en',
+            match: /You earned\s*(\d+)\s*points?\s+already.{0,120}?(?:daily|pc)?\s*search(?:es)?\s+(?:are\s+)?complete/i
+        }
+    ];
+
+    for (const { rule, match: pattern } of completedRules) {
+        const match = text.match(pattern);
+        if (!match) continue;
+        const current = parseInt(match[1], 10);
+        return { current, total: current, completed: true, rule };
+    }
+
+    return null;
+}
 
 export async function fetchOrganicSearchTerms() {
     try {
@@ -96,7 +154,7 @@ function discoverCards(doc: Document): Set<Element> {
 function filterCards(cardsArray: Set<Element>): Element[] {
     return Array.from(cardsArray).filter(card => {
         for (let other of cardsArray) {
-            if (other !== card && other.contains(card)) {
+            if (other !== card && card.contains(other)) {
                 return false;
             }
         }
@@ -105,18 +163,25 @@ function filterCards(cardsArray: Set<Element>): Element[] {
         const href = link ? (link.getAttribute('href') || '').toLowerCase() : '';
         const ariaLabel = card.getAttribute('aria-label') || '';
         
-        const isRelative = href.startsWith('/') && !href.startsWith('//');
-        const isBingDomain = href.includes('.bing.com/') || href.startsWith('https://bing.com/');
-        
-        if (!isRelative && !isBingDomain && href !== '') {
-            console.log(`[RewardsHelper] 剔除卡片 (跨域外链，会导致脚本终止): aria="${ariaLabel}", href="${href.substring(0, 40)}"`);
-            return false;
+        const isRelativeBingPath = href.startsWith('/') && !href.startsWith('//');
+        if (href && !isRelativeBingPath) {
+            try {
+                const parsedUrl = new URL(href, window.location.href);
+                if ((parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') || !isBingHost(parsedUrl.hostname)) {
+                    console.log(`[RewardsHelper] 剔除卡片 (非 Bing 链接): aria="${ariaLabel}", href="${href.substring(0, 40)}"`);
+                    return false;
+                }
+            } catch {
+                return false;
+            }
         }
         
-        let points = getCardPoints(card);
-        
-        if (points >= 50 || points <= 0) {
-            console.log(`[RewardsHelper] 剔除卡片 (高分非日常任务): 分数=${points}, aria="${ariaLabel}"`);
+        const points = getCardPoints(card);
+        const hasTrustedTaskShape = card.matches(
+            '#exb-activityChecklist .promo_cont, [data-task-id], [data-offer-id], .promo_cont, .rw-card, .explore-card, .task-card'
+        ) || Boolean(card.closest('.promo_cont, #exb-activityChecklist'));
+        if (points <= 0 && !hasTrustedTaskShape) {
+            console.log(`[RewardsHelper] 剔除卡片 (无积分且缺少任务标识): aria="${ariaLabel}"`);
             return false;
         }
         
@@ -151,7 +216,7 @@ function getCardPoints(card: Element): number {
     return points;
 }
 
-function getCardCompletionStatus(card: Element): string {
+export function getCardCompletionStatus(card: Element): string {
     const ariaLabel = card.getAttribute('aria-label') || '';
     const html = card.innerHTML || '';
     const text = card.textContent || '';
@@ -164,14 +229,14 @@ function getCardCompletionStatus(card: Element): string {
 
     const ariaLower = ariaLabel.toLowerCase();
     
-    if (pAriaLower.includes('添加') || pAriaLower.includes('added')) {
-        return '已完成';
-    } else if (pAriaLower.includes('积分') || pAriaLower.includes('points')) {
-        return '未完成';
-    } else if (ariaLower.includes('not completed') || ariaLower.includes('未完成')) {
+    if (ariaLower.includes('not completed') || ariaLower.includes('未完成')) {
         return '未完成';
     } else if (ariaLower.includes('is completed') || ariaLower.includes('completed') || ariaLower.includes('已完成')) {
         return '已完成';
+    } else if (pAriaLower.includes('添加') || pAriaLower.includes('added')) {
+        return '已完成';
+    } else if (pAriaLower.includes('积分') || pAriaLower.includes('points')) {
+        return '未完成';
     } else {
         const hasCheck = /check|completed|已完成/i.test(html) || /已完成/.test(text);
         const hasAdd = /add|plus/i.test(html) || /未完成/.test(text) || /^\+\s*\d+/.test(text) || html.includes('+');
@@ -244,6 +309,54 @@ function getUniqueTaskCandidates(candidates: string[]): string[] {
     return result;
 }
 
+function hasSearchPromotionIntent(values: string[], hrefQuery: string): boolean {
+    if (hrefQuery && !isUrlLikeSearchCandidate(hrefQuery)) return true;
+    const text = values.join(' ');
+    return /(?:搜索|查找|寻找)|\b(?:search(?:\s+bing)?\s+for|look\s+up)\b|\bfind\s+(?:a|an|the)?\s*(?:place|places|hotel|hotels|restaurant|restaurants|flight|flights|recipe|recipes|movie|movies|job|jobs|product|products)\b/i.test(text);
+}
+
+function cleanupSearchPromotionTerm(value: string): string {
+    return cleanupTaskText(value)
+        .replace(/^(?:search(?:\s+bing)?\s+for|look\s+up|find)\s+/i, '')
+        .replace(/^(?:在\s*bing\s*上\s*)?(?:搜索|查找|寻找)\s*/i, '')
+        .trim();
+}
+
+function getConfiguredSearchPromotionTerms(values: string[]): string[] {
+    const candidates = values
+        .map(value => cleanupTaskText(value).toLowerCase())
+        .filter(Boolean);
+    const entries = Object.entries(searchPromotionTerms as Record<string, unknown>)
+        .filter((entry): entry is [string, unknown[]] => Array.isArray(entry[1]))
+        .sort(([left], [right]) => cleanupTaskText(right).length - cleanupTaskText(left).length);
+
+    const findTerms = (exact: boolean) => {
+        const entry = entries.find(([cardMatch]) => {
+            const match = cleanupTaskText(cardMatch).toLowerCase();
+            if (!match) return false;
+            return candidates.some(candidate => exact ? candidate === match : candidate.includes(match));
+        });
+        return entry?.[1] || [];
+    };
+    const configuredTerms = findTerms(true);
+    const matchedTerms = configuredTerms.length > 0 ? configuredTerms : findTerms(false);
+    const result: string[] = [];
+
+    matchedTerms.forEach(term => {
+        if (typeof term !== 'string') return;
+        const cleaned = term.replace(/\s+/g, ' ').trim();
+        if (cleaned.length < 2 || cleaned.length > 80 || isUrlLikeSearchCandidate(cleaned)) return;
+        if (!result.some(value => value.toLowerCase() === cleaned.toLowerCase())) result.push(cleaned);
+    });
+    return result;
+}
+
+function getFixedSearchTerms(values: string[]): string[] {
+    const configuredTerms = getConfiguredSearchPromotionTerms(values);
+    if (configuredTerms.length > 0) return configuredTerms;
+    return getUniqueTaskCandidates(values.map(cleanupSearchPromotionTerm));
+}
+
 function getCardDisplayName(card: Element, idx: number): string {
     const ariaLabel = card.getAttribute('aria-label') || '';
     const text = card.textContent || '';
@@ -290,21 +403,29 @@ function createDailyTaskFromCard(card: Element, idx: number, status: string): Da
         .split('\n')
         .map(l => l.trim())
         .filter(l => l && !/^\+?\s*\d+\s*(分|points?)?$/i.test(l));
-    const queryCandidates = getUniqueTaskCandidates([
-        getHrefQuery(href),
+    const hrefQuery = getHrefQuery(href);
+    const searchInputs = [
+        hrefQuery,
         title,
         ariaLabel,
         ...imgAlt,
         ...descriptions,
         ...textLines
-    ]);
+    ];
+    const kind = hasSearchPromotionIntent(searchInputs, hrefQuery)
+        ? 'search-promotion'
+        : 'navigation';
+    const searchTerms = kind === 'search-promotion'
+        ? getFixedSearchTerms(searchInputs)
+        : [];
 
     return {
         url: href,
         title,
         status: status === '已完成' ? '已完成' : '未完成',
         points: getCardPoints(card),
-        queryCandidates,
+        kind,
+        searchTerms,
         attempts: 0,
         source: 'card'
     };
@@ -396,6 +517,8 @@ export function getDataFromPanel() {
 
         let progressFound = false;
         let currentBestProgress: any = null;
+        const allEarnedText = targetDoc.body ? (targetDoc.body.innerText || targetDoc.body.textContent || '') : '';
+        const earnedProgress = parseEarnedProgressText(allEarnedText);
 
         let potentialProgresses: any[] = [];
         const allElements = targetDoc.querySelectorAll('span, div, p');
@@ -406,7 +529,7 @@ export function getDataFromPanel() {
                 if (matches) {
                     const cur = parseInt(matches[1], 10);
                     const max = parseInt(matches[2], 10);
-                    if (max >= 12 && max <= 1000 && max !== 100 && !txt.toLowerCase().includes('min') && !txt.toLowerCase().includes('level') && !txt.includes('级')) {
+                    if (max >= 12 && max <= 1000 && !txt.toLowerCase().includes('min') && !txt.toLowerCase().includes('level') && !txt.includes('级')) {
                         
                         let parent = el.parentElement;
                         let contextText = txt;
@@ -435,15 +558,23 @@ export function getDataFromPanel() {
             const searchProgresses = potentialProgresses.filter(p => p.isSearch);
             if (searchProgresses.length > 0) {
                 best = searchProgresses.reduce((prev, curr) => (prev.max > curr.max) ? prev : curr);
-            } else {
-                let filtered = potentialProgresses.filter(p => p.max !== 80);
-                if (filtered.length > 0) {
-                    best = filtered.reduce((prev, curr) => (prev.max > curr.max) ? prev : curr);
-                } else {
-                    best = potentialProgresses.reduce((prev, curr) => (prev.max > curr.max) ? prev : curr);
-                }
+            } else if (potentialProgresses.length === 1) {
+                best = potentialProgresses[0];
             }
             currentBestProgress = best;
+        }
+
+        // The Rewards flyout can show an English multiline summary such as
+        // "You earned 80 points already ... earn up to 200 points" alongside
+        // unrelated 80-point fractions. The explicit summary is authoritative.
+        if (earnedProgress) {
+            console.log(`匹配到积分摘要规则: ${earnedProgress.rule}`);
+            currentBestProgress = {
+                current: earnedProgress.current,
+                max: earnedProgress.total,
+                completed: earnedProgress.completed,
+                rule: earnedProgress.rule
+            };
         }
 
         if (currentBestProgress) {
@@ -462,12 +593,15 @@ export function getDataFromPanel() {
             } else if (current > store.currentProgress.lastChecked) {
                 console.log(`进度增加: ${current} > ${store.currentProgress.lastChecked}，重置未增加计数`);
                 store.currentProgress.noProgressCount = 0;
+                store.searchState.restCycles = 0;
             }
 
             store.currentProgress.current = current;
             store.currentProgress.lastChecked = current;
 
-            store.currentProgress.completed = current >= store.currentProgress.total;
+            store.currentProgress.completed = typeof currentBestProgress.completed === 'boolean'
+                ? currentBestProgress.completed
+                : current >= store.currentProgress.total;
             if (store.currentProgress.completed) {
                 console.log(`进度数字表明任务已完成: ${current}/${store.currentProgress.total}`);
             }
@@ -480,58 +614,6 @@ export function getDataFromPanel() {
             progressFound = true;
         } else {
             console.log('未找到进度元素，检查完成提示');
-        }
-
-        if (!progressFound) {
-            const allEarnedText = targetDoc.body ? (targetDoc.body.innerText || targetDoc.body.textContent || '') : '';
-            console.log('合并后的提示文本提取完毕');
-
-            const progressRules = [
-                {
-                    type: 'fake_zh',
-                    match: /你已获得\s*(\d+)\s*积分.*每天继续搜索并获得最多\s*(\d+)/,
-                    completed: false
-                },
-                {
-                    type: 'real_zh',
-                    match: /你已获得\s*(\d+)\s*积分(?!.*每天继续搜索)/,
-                    completed: true
-                },
-                {
-                    type: 'fake_en',
-                    match: /You earned\s*(\d+)\s*points?(?:\s+already)?.*(?:earn\s+up\s+to|get\s+up\s+to)\s*(\d+)/i,
-                    completed: false
-                },
-                {
-                    type: 'real_en',
-                    match: /You earned\s*(\d+)\s*points already(?!.*Keep searching)/i,
-                    completed: true
-                }
-            ];
-
-            for (const rule of progressRules) {
-                const match = allEarnedText.match(rule.match);
-                if (match) {
-                    console.log(`匹配到规则: ${rule.type}`);
-                    const currentPoints = parseInt(match[1]);
-                    const totalPoints = rule.completed ? currentPoints : parseInt(match[2]);
-                    
-                    store.currentProgress.current = currentPoints;
-                    store.currentProgress.total = totalPoints;
-                    store.currentProgress.lastChecked = currentPoints;
-                    store.currentProgress.completed = rule.completed;
-                    
-                    const statusStr = rule.completed ? '(已完成)' : '(从提示获取)';
-                    updateProgressUI();
-                    
-                    if (rule.completed) {
-                        store.clearState();
-                    } else {
-                        if (store.isSearching) store.saveState();
-                    }
-                    return true;
-                }
-            }
         }
 
         let iframeTermsFound = false;
@@ -616,6 +698,8 @@ export function getDataFromPanel() {
             console.log('所有方法均未找到侧边栏搜索词');
         }
 
+        store.searchState.panelParsed = true;
+        store.searchState.panelFailureCount = 0;
         return progressFound || iframeTermsFound || (store.dailyTasksData && store.dailyTasksData.length > 0);
     } catch (e: any) {
         console.log('读取面板内容出错: ' + e.message);
@@ -635,9 +719,9 @@ function hrefMatchesTask(href: string | null, taskUrl: string): boolean {
     }
 }
 
-export async function clickTaskCardAsync(taskOrUrl: DailyTask | string): Promise<boolean> {
+export async function clickTaskCardAsync(task: DailyTask): Promise<boolean> {
     try {
-        const url = getDailyTaskUrl(taskOrUrl);
+        const url = task.url;
         const iframe = getRewardsFlyoutIframe();
         if (!iframe) return false;
         
@@ -649,6 +733,8 @@ export async function clickTaskCardAsync(taskOrUrl: DailyTask | string): Promise
         if (linkElem) {
             const targetElem = linkElem as HTMLElement;
             console.log(`[RewardsHelper] 找到任务卡片并模拟点击: ${url}`);
+            const normalizedUrl = normalizeBingTaskUrl(linkElem.getAttribute('href') || url);
+            if (normalizedUrl !== linkElem.href) linkElem.href = normalizedUrl;
 
             const rect = targetElem.getBoundingClientRect();
             if (rect.width > 0 && rect.height > 0) {
@@ -674,14 +760,7 @@ export async function clickTaskCardAsync(taskOrUrl: DailyTask | string): Promise
                 clickTarget.dispatchEvent(new MouseEvent('mouseup', eventOptions));
                 await new Promise(r => setTimeout(r, 50));
 
-                clickTarget.dispatchEvent(new MouseEvent('click', eventOptions));
-
-                // Trigger native click as well to ensure default navigation happens
-                // if the custom event is not handled by the page script.
-                if (clickTarget !== targetElem) {
-                    (clickTarget as HTMLElement).click?.();
-                }
-                targetElem.click();
+                (clickTarget as HTMLElement).click();
             } else {
                 targetElem.click();
             }

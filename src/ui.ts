@@ -1,6 +1,5 @@
 import { config } from './config';
 import { store } from './state';
-import { isDarkMode } from './dom';
 import { t } from './i18n';
 import { CURRENT_VERSION } from './update';
 
@@ -547,6 +546,8 @@ export function updateProgressUI() {
     if (progressFill && total > 0) {
         const percent = Math.min(100, Math.max(0, (curr / total) * 100));
         progressFill.style.width = `${percent}%`;
+    } else if (progressFill) {
+        progressFill.style.width = '0%';
     }
 }
 
@@ -621,10 +622,6 @@ export function showCompletionNotification() {
     showToast(t('status', 'allCompletedToast', store.currentProgress.total), 6000);
 }
 
-export function applyTheme() {
-    // Theme is mostly handled by CSS matching .b_dark on body/html
-}
-
 export function setSearchButtonState(state: 'searching' | 'idle') {
     const btn = document.getElementById('rh-start-btn');
     const badge = document.getElementById('rh-badge');
@@ -645,7 +642,3 @@ export function setSearchButtonState(state: 'searching' | 'idle') {
         }
     }
 }
-
-export function toggleCollapse() {}
-export function applyCollapseState() {}
-export function makeDraggable() {}

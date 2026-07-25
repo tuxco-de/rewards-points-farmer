@@ -1,13 +1,13 @@
-import { config } from './config';
-import { store, sleep, getRandomInterval, STORAGE_KEY } from './state';
-import { createUI, applyCollapseState, applyTheme, updateStatus, showCompletionNotification, setSearchButtonState, updateProgressUI, updateDailyTasksUI, showToast, openSettingsPanel } from './ui';
+import { store, STORAGE_KEY } from './state';
+import { createUI, updateStatus, setSearchButtonState, updateProgressUI, updateDailyTasksUI, showToast, openSettingsPanel } from './ui';
 import { openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent } from './dom';
 import { getDataFromPanel, getSearchTermsFromMainDoc } from './parser';
-import { countdownAsync, simulateScrollingAsync, searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm, getExecutionPhase } from './search';
+import { searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm, getExecutionPhase } from './search';
 import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
 import { consumePendingWorkerCommand, initializeDedicatedWorkerContext, isDedicatedWorkerContext, listenForWorkerCommands, requestDedicatedWorkerStart, requestDedicatedWorkerStop } from './worker';
 import { checkForUpdates } from './update';
+import { collectClaimablePointsAndContinue, isClaimCheckContext } from './claims';
 
 declare const GM_registerMenuCommand: undefined | ((caption: string, onClick: () => void) => string | number);
 
@@ -28,7 +28,25 @@ declare global {
 let dedicatedWorker = false;
 let sharedIsSearching = false;
 
+async function startWorkerSearchSafely() {
+    try {
+        await startAutomatedSearch();
+    } catch (error) {
+        console.error('[RewardsHelper] 任务运行失败:', error);
+        stopAutomatedSearch(t('status', 'runtimeErrorStopped'), true);
+    }
+}
+
 function applySharedStateToController(savedState: any) {
+    if (!savedState) {
+        store.resetRuntimeState();
+        sharedIsSearching = false;
+        updateProgressUI();
+        updateDailyTasksUI([]);
+        setSearchButtonState('idle');
+        return;
+    }
+
     store.isSearching = false;
     sharedIsSearching = Boolean(savedState?.isSearching);
 
@@ -50,7 +68,7 @@ function syncControllerState() {
 
 async function startFromCurrentContext() {
     if (dedicatedWorker) {
-        if (!store.isSearching) await startAutomatedSearch();
+        if (!store.isSearching) await startWorkerSearchSafely();
         return;
     }
 
@@ -73,7 +91,10 @@ function stopFromCurrentContext() {
 
     requestDedicatedWorkerStop();
     store.clearState();
+    store.resetRuntimeState();
     sharedIsSearching = false;
+    updateProgressUI();
+    updateDailyTasksUI([]);
     setSearchButtonState('idle');
     updateStatus(t('status', 'stopRequested'));
 }
@@ -139,63 +160,14 @@ function restoreState() {
 
         updateStatus(t('status', 'detectedPrev'));
 
-        setTimeout(async () => {
-            if (getExecutionPhase() !== 'complete') {
-                console.log('恢复搜索状态，继续之前的搜索任务');
-                
-                setSearchButtonState('searching');
-                
-                if (!store.isSearching) return;
-                await simulateScrollingAsync();
-                
-                if (!store.isSearching) return;
-                updateStatus(t('status', 'checkingProgress'));
-                store.searchState.currentAction = 'checking';
-                
-                if (await openRewardsSidebarAsync()) {
-                    await waitForIframeContent(10000);
-                    getDataFromPanel();
-                    getSearchTermsFromMainDoc();
-                    
-                    await closeRewardsSidebarAsync();
-                    
-                    if (getExecutionPhase() === 'cards' && store.searchState.dailyTasksQueue.length > 0) {
-                        updateStatus(t('status', 'executingPanel'));
-                        setTimeout(searchLoop, 1000);
-                        return;
-                    }
-                    
-                    if (getExecutionPhase() === 'complete') {
-                        showCompletionNotification();
-                        updateStatus(t('status', 'allCompleted'));
-                        stopAutomatedSearch();
-                        return;
-                    }
-                    
-                    if (store.searchState.needRest) {
-                        store.searchState.needRest = false;
-                        store.currentProgress.noProgressCount = 0;
-                        updateStatus(t('status', 'resting', config.maxNoProgressCount, config.restTime / 60));
-                        await countdownAsync(config.restTime, 'resting');
-                        updateStatus(t('status', 'restFinished'));
-                        await sleep(1000);
-                    }
-                } else {
-                    updateStatus(t('status', 'failedSidebarCheck'));
-                }
-                
-                if (!store.isSearching) return;
-                updateStatus(t('status', 'waitingNext'));
-                const waitMs = getRandomInterval();
-                await countdownAsync(Math.floor(waitMs / 1000), 'waiting');
-                
-                if (store.isSearching) {
-                    searchLoop();
-                }
-            } else {
-                updateStatus(t('status', 'prevCompleted'));
-                store.clearState();
-            }
+        setSearchButtonState('searching');
+        setTimeout(() => {
+            if (!store.isSearching) return;
+            console.log('恢复搜索状态，继续之前的搜索任务');
+            void searchLoop().catch(error => {
+                console.error('[RewardsHelper] 恢复任务失败:', error);
+                stopAutomatedSearch(t('status', 'runtimeErrorStopped'), true);
+            });
         }, 3000);
 
         return true;
@@ -211,8 +183,12 @@ window.addEventListener('beforeunload', () => {
 
 // skip running inside iframes (e.g. rewards sidebar)
 if (window === window.top) {
-    window.addEventListener('load', function () {
+    window.addEventListener('load', async function () {
         console.log('Rewards Points Farmer 已加载');
+        if (isClaimCheckContext()) {
+            await collectClaimablePointsAndContinue();
+            return;
+        }
         dedicatedWorker = initializeDedicatedWorkerContext();
         store.loadConfig();
         createUI({
@@ -220,8 +196,6 @@ if (window === window.top) {
             onToggleSearch: toggleSearchFromCurrentContext,
             onCheckForUpdates: checkForUpdatesAndNotify
         });
-        applyCollapseState();
-
         window.startRewardsTask = () => { void startFromCurrentContext(); };
         window.stopRewardsTask = stopFromCurrentContext;
         window.__e2e_performSearch = performSearch;
@@ -230,7 +204,7 @@ if (window === window.top) {
         window.__e2e_getExecutionPhase = getExecutionPhase;
         window.__e2e_getDailyTaskQueue = () => store.searchState.dailyTasksQueue.map(task => ({
             ...task,
-            queryCandidates: [...task.queryCandidates]
+            searchTerms: [...task.searchTerms]
         }));
         window.__e2e_isDedicatedWorker = isDedicatedWorkerContext;
         window.__e2e_isLocalSearchRunning = () => store.isSearching;
@@ -242,11 +216,6 @@ if (window === window.top) {
                 if (event.key === STORAGE_KEY) syncControllerState();
             });
         }
-
-        const observer = new MutationObserver(() => applyTheme());
-        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-darkmode'] });
-        observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
         setTimeout(() => {
             if (!dedicatedWorker) {
@@ -260,7 +229,7 @@ if (window === window.top) {
             } else {
                 const restored = restoreState();
                 if (!restored && pendingCommand?.action === 'start') {
-                    void startAutomatedSearch();
+                    void startWorkerSearchSafely();
                 } else if (!restored) {
                     void collectRewardsDataInWorker();
                 }
@@ -268,7 +237,7 @@ if (window === window.top) {
 
             listenForWorkerCommands(command => {
                 if (command.action === 'start' && !store.isSearching) {
-                    void startAutomatedSearch();
+                    void startWorkerSearchSafely();
                 } else if (command.action === 'stop') {
                     stopAutomatedSearch();
                 }

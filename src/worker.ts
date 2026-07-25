@@ -1,3 +1,6 @@
+import { buildClaimCheckUrl } from './claims';
+import { buildBingPageUrl } from './navigation';
+
 const WORKER_QUERY_PARAM = 'rewards_helper_worker';
 const WORKER_AUTOSTART_PARAM = 'rewards_helper_autostart';
 const WORKER_SESSION_KEY = 'bing_rewards_worker_session';
@@ -47,12 +50,17 @@ function readWorkerLease(): WorkerLease | null {
     return parseStoredValue<WorkerLease>(WORKER_LEASE_KEY);
 }
 
-function writeWorkerLease() {
-    if (!workerTabId) return;
-    localStorage.setItem(WORKER_LEASE_KEY, JSON.stringify({
-        tabId: workerTabId,
-        expiresAt: Date.now() + WORKER_LEASE_MS
-    } satisfies WorkerLease));
+function writeWorkerLease(): boolean {
+    if (!workerTabId) return false;
+    try {
+        localStorage.setItem(WORKER_LEASE_KEY, JSON.stringify({
+            tabId: workerTabId,
+            expiresAt: Date.now() + WORKER_LEASE_MS
+        } satisfies WorkerLease));
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 function claimWorkerLease(force = false): boolean {
@@ -61,7 +69,7 @@ function claimWorkerLease(force = false): boolean {
         return false;
     }
 
-    writeWorkerLease();
+    if (!writeWorkerLease()) return false;
     return readWorkerLease()?.tabId === workerTabId;
 }
 
@@ -104,7 +112,8 @@ export function initializeDedicatedWorkerContext(): boolean {
 export function isDedicatedWorkerContext(): boolean {
     if (!workerContext) return false;
     const lease = readWorkerLease();
-    return !lease || lease.expiresAt <= Date.now() || lease.tabId === workerTabId;
+    if (!lease || lease.expiresAt <= Date.now()) return claimWorkerLease();
+    return lease.tabId === workerTabId;
 }
 
 function publishWorkerCommand(action: WorkerCommandAction): WorkerCommand {
@@ -113,22 +122,24 @@ function publishWorkerCommand(action: WorkerCommandAction): WorkerCommand {
         id: createId(),
         createdAt: Date.now()
     };
-    localStorage.setItem(WORKER_COMMAND_KEY, JSON.stringify(command));
+    try {
+        localStorage.setItem(WORKER_COMMAND_KEY, JSON.stringify(command));
+    } catch {
+        console.warn('[RewardsHelper] 无法通过 localStorage 发布任务命令');
+    }
     return command;
 }
 
 function buildWorkerUrl(): string {
-    const url = new URL(window.location.href);
-    if (url.protocol === 'http:' || url.protocol === 'https:') url.pathname = '/';
-    url.search = '';
-    url.hash = '';
-    url.searchParams.set(WORKER_QUERY_PARAM, '1');
-    url.searchParams.set(WORKER_AUTOSTART_PARAM, '1');
-    return url.toString();
+    return buildBingPageUrl('/', {
+        [WORKER_QUERY_PARAM]: '1',
+        [WORKER_AUTOSTART_PARAM]: '1'
+    });
 }
 
 export function requestDedicatedWorkerStart(): boolean {
-    const workerWindow = window.open(buildWorkerUrl(), WORKER_WINDOW_NAME);
+    const workerUrl = buildWorkerUrl();
+    const workerWindow = window.open(buildClaimCheckUrl(workerUrl), WORKER_WINDOW_NAME);
     if (!workerWindow) return false;
     publishWorkerCommand('start');
     return true;

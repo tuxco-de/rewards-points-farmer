@@ -115,14 +115,6 @@ function clickRewardsEntry(element: HTMLElement) {
     }));
 }
 
-export function isDarkMode() {
-    const html = document.documentElement;
-    if (html.classList.contains('b_dark') || document.body?.classList.contains('b_dark')) return true;
-    if (html.getAttribute('data-darkmode') === 'true') return true;
-    if (document.body) return false;
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
-}
-
 export async function closeRewardsSidebarAsync() {
     try {
         const iframe = getRewardsFlyoutIframe();

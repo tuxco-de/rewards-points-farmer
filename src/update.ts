@@ -1,6 +1,8 @@
 declare const __SCRIPT_VERSION__: string;
 
-export const CURRENT_VERSION = __SCRIPT_VERSION__;
+export const CURRENT_VERSION = typeof __SCRIPT_VERSION__ === 'string'
+    ? __SCRIPT_VERSION__
+    : '0.0.0-dev';
 export const LATEST_RELEASE_API = 'https://api.github.com/repos/tuxco-de/rewards-points-farmer/releases/latest';
 
 export interface UpdateCheckResult {

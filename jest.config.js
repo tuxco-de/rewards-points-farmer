@@ -5,5 +5,5 @@ module.exports = {
   testEnvironmentOptions: {
     url: "https://rewards.bing.com/"
   },
-  testMatch: ['**/?(*.)+(spec|test).[jt]s?(x)'],
+  testMatch: ['<rootDir>/tests/unit/**/*.test.ts'],
 };

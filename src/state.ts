@@ -3,18 +3,23 @@ import { config } from './config';
 export const STORAGE_KEY = 'bing_rewards_auto_searcher_state';
 const CONFIG_KEY = 'bing_rewards_config';
 export const MAX_DAILY_TASK_ATTEMPTS = 4;
+export const MAX_PANEL_FAILURES = 5;
+export const MAX_TOTAL_SEARCH_ATTEMPTS = 100;
+export const MAX_REST_CYCLES = 3;
 
 export type DailyTaskStatus = '未完成' | '已完成';
+export type DailyTaskKind = 'search-promotion' | 'navigation';
 
 export interface DailyTask {
     url: string;
     title: string;
     status: DailyTaskStatus;
     points: number;
-    queryCandidates: string[];
+    kind: DailyTaskKind;
+    searchTerms: string[];
     attempts: number;
     lastAttemptAt?: number;
-    source?: string;
+    source?: 'card';
 }
 
 function extractQueryFromUrl(url: string): string {
@@ -63,54 +68,42 @@ function uniqueCandidates(candidates: string[]): string[] {
     return result;
 }
 
-export function normalizeDailyTaskEntry(entry: any): DailyTask | null {
-    if (!entry) return null;
-    if (typeof entry === 'string') {
-        const query = extractQueryFromUrl(entry);
-        return {
-            url: entry,
-            title: query || entry,
-            status: '未完成',
-            points: 0,
-            queryCandidates: uniqueCandidates([query, entry]),
-            attempts: 0,
-            source: 'legacy'
-        };
-    }
-
-    if (typeof entry !== 'object') return null;
-    const url = String(entry.url || '').trim();
-    const title = normalizeCandidate(String(entry.title || extractQueryFromUrl(url) || url));
+function normalizeDailyTaskEntry(entry: unknown): DailyTask | null {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const candidate = entry as Partial<DailyTask>;
+    const url = typeof candidate.url === 'string' ? candidate.url.trim() : '';
+    const title = normalizeCandidate(
+        typeof candidate.title === 'string'
+            ? candidate.title
+            : extractQueryFromUrl(url) || url
+    );
     if (!url && !title) return null;
 
     return {
         url,
         title,
-        status: entry.status === '已完成' ? '已完成' : '未完成',
-        points: Number(entry.points || 0),
-        queryCandidates: uniqueCandidates([
-            ...(Array.isArray(entry.queryCandidates) ? entry.queryCandidates : []),
-            title,
-            extractQueryFromUrl(url)
+        status: candidate.status === '已完成' ? '已完成' : '未完成',
+        points: Number(candidate.points || 0),
+        kind: candidate.kind === 'search-promotion' ? 'search-promotion' : 'navigation',
+        searchTerms: uniqueCandidates([
+            ...(Array.isArray(candidate.searchTerms)
+                ? candidate.searchTerms.filter((value): value is string => typeof value === 'string')
+                : [])
         ]),
-        attempts: Math.max(0, Number(entry.attempts || 0)),
-        lastAttemptAt: Number(entry.lastAttemptAt || 0) || undefined,
-        source: entry.source ? String(entry.source) : undefined
+        attempts: Math.max(0, Number(candidate.attempts || 0)),
+        lastAttemptAt: Number(candidate.lastAttemptAt || 0) || undefined,
+        source: candidate.source === 'card' ? 'card' : undefined
     };
 }
 
-export function getDailyTaskKey(task: DailyTask | string): string {
-    if (typeof task === 'string') return task;
+export function getDailyTaskKey(task: DailyTask): string {
     return task.url || task.title;
 }
 
-export function getDailyTaskUrl(task: DailyTask | string): string {
-    return typeof task === 'string' ? task : task.url;
-}
-
-export function normalizeDailyTaskQueue(entries: any[]): DailyTask[] {
+function normalizeDailyTaskQueue(entries: unknown): DailyTask[] {
+    if (!Array.isArray(entries)) return [];
     const queue: DailyTask[] = [];
-    (entries || []).forEach(entry => {
+    entries.forEach(entry => {
         const task = normalizeDailyTaskEntry(entry);
         if (!task) return;
         const key = getDailyTaskKey(task);
@@ -120,7 +113,7 @@ export function normalizeDailyTaskQueue(entries: any[]): DailyTask[] {
     return queue;
 }
 
-export function upsertDailyTask(taskInput: DailyTask | string): boolean {
+export function upsertDailyTask(taskInput: DailyTask): boolean {
     const task = normalizeDailyTaskEntry(taskInput);
     if (!task || task.status === '已完成') return false;
     const key = getDailyTaskKey(task);
@@ -131,7 +124,12 @@ export function upsertDailyTask(taskInput: DailyTask | string): boolean {
         existing.title = task.title || existing.title;
         existing.status = task.status;
         existing.points = task.points || existing.points;
-        existing.queryCandidates = uniqueCandidates([...existing.queryCandidates, ...task.queryCandidates]);
+        if (task.kind === 'search-promotion') {
+            existing.kind = 'search-promotion';
+            if (task.searchTerms.length > 0) {
+                existing.searchTerms = [...task.searchTerms];
+            }
+        }
         existing.source = task.source || existing.source;
         return false;
     }
@@ -140,21 +138,21 @@ export function upsertDailyTask(taskInput: DailyTask | string): boolean {
     return true;
 }
 
-export function removeDailyTask(taskInput: DailyTask | string) {
+export function removeDailyTask(taskInput: DailyTask) {
     const key = getDailyTaskKey(taskInput);
     store.searchState.dailyTasksQueue = store.searchState.dailyTasksQueue.filter(task => getDailyTaskKey(task) !== key);
 }
 
-export function recordDailyTaskAttempt(taskInput: DailyTask | string): DailyTask | null {
+export function recordDailyTaskAttempt(taskInput: DailyTask): DailyTask | null {
     const key = getDailyTaskKey(taskInput);
-    const task = store.searchState.dailyTasksQueue.find(item => getDailyTaskKey(item) === key) || normalizeDailyTaskEntry(taskInput);
+    const task = store.searchState.dailyTasksQueue.find(item => getDailyTaskKey(item) === key);
     if (!task) return null;
     task.attempts += 1;
     task.lastAttemptAt = Date.now();
     return task;
 }
 
-export function markDailyTaskSkipped(taskInput: DailyTask | string) {
+export function markDailyTaskSkipped(taskInput: DailyTask) {
     const key = getDailyTaskKey(taskInput);
     if (key && !store.searchState.attemptedTasks.includes(key)) {
         store.searchState.attemptedTasks.push(key);
@@ -163,10 +161,9 @@ export function markDailyTaskSkipped(taskInput: DailyTask | string) {
 }
 
 export function getDailyTaskSearchTerm(task: DailyTask): string {
-    const candidates = uniqueCandidates([...task.queryCandidates, task.title]);
-    if (candidates.length === 0) return '';
-    const index = Math.max(0, Math.min(task.attempts - 1, candidates.length - 1));
-    return candidates[index];
+    if (task.kind !== 'search-promotion' || task.searchTerms.length === 0) return '';
+    const index = Math.max(0, task.attempts - 1);
+    return task.searchTerms[index] || '';
 }
 
 class StateStore {
@@ -212,7 +209,10 @@ class StateStore {
         currentAction: 'idle',
         countdown: 0,
         needRest: false,
-        isCollapsed: true,
+        panelParsed: false,
+        panelFailureCount: 0,
+        totalSearchAttempts: 0,
+        restCycles: 0,
         dailyTasksQueue: [] as DailyTask[],
         attemptedTasks: [] as string[]
     };
@@ -229,6 +229,9 @@ class StateStore {
             dailyTasksData: this.dailyTasksData,
             dailyTasksQueue: this.searchState.dailyTasksQueue,
             attemptedTasks: this.searchState.attemptedTasks,
+            panelFailureCount: this.searchState.panelFailureCount,
+            totalSearchAttempts: this.searchState.totalSearchAttempts,
+            restCycles: this.searchState.restCycles,
             timestamp: Date.now()
         };
         try {
@@ -260,6 +263,9 @@ class StateStore {
                 if (state.attemptedTasks) {
                     this.searchState.attemptedTasks = state.attemptedTasks;
                 }
+                this.searchState.panelFailureCount = Math.max(0, Number(state.panelFailureCount || 0));
+                this.searchState.totalSearchAttempts = Math.max(0, Number(state.totalSearchAttempts || 0));
+                this.searchState.restCycles = Math.max(0, Number(state.restCycles || 0));
                 if (state.dailyTasksData) {
                     this.dailyTasksData = state.dailyTasksData;
                 }
@@ -280,6 +286,35 @@ class StateStore {
         }
     }
 
+    resetRuntimeState(preserveProgress = false) {
+        this.isSearching = false;
+        this.usedSearchTerms = [];
+        this.mainPageSearchTerms = [];
+        this.iframeSearchTerms = [];
+        this.dynamicSearchTerms = [];
+        if (!preserveProgress) this.dailyTasksData = [];
+        this.searchState.currentAction = 'idle';
+        this.searchState.countdown = 0;
+        this.searchState.needRest = false;
+        this.searchState.panelParsed = false;
+        this.searchState.panelFailureCount = 0;
+        this.searchState.totalSearchAttempts = 0;
+        this.searchState.restCycles = 0;
+        this.searchState.dailyTasksQueue = [];
+        this.searchState.attemptedTasks = [];
+        if (!preserveProgress) {
+            this.currentProgress = {
+                current: 0,
+                total: 0,
+                lastChecked: 0,
+                completed: false,
+                noProgressCount: 0
+            };
+        } else {
+            this.currentProgress.noProgressCount = 0;
+        }
+    }
+
     loadConfig() {
         try {
             const saved = localStorage.getItem(CONFIG_KEY);
@@ -287,7 +322,6 @@ class StateStore {
                 const c = JSON.parse(saved);
                 if (Number.isFinite(c.restTime) && c.restTime > 0) config.restTime = c.restTime;
                 if (Number.isFinite(c.scrollTime) && c.scrollTime > 0) config.scrollTime = c.scrollTime;
-                if (Number.isFinite(c.waitTime) && c.waitTime > 0) config.waitTime = c.waitTime;
                 if (Number.isFinite(c.maxNoProgressCount) && c.maxNoProgressCount > 0) {
                     config.maxNoProgressCount = c.maxNoProgressCount;
                 }
@@ -298,7 +332,6 @@ class StateStore {
                         config.searchInterval = [min, max];
                     }
                 }
-                if (c.isCollapsed !== undefined) this.searchState.isCollapsed = c.isCollapsed;
             }
         } catch (e) {
             console.warn('加载配置失败:', e);
@@ -310,10 +343,8 @@ class StateStore {
             localStorage.setItem(CONFIG_KEY, JSON.stringify({
                 restTime: config.restTime,
                 scrollTime: config.scrollTime,
-                waitTime: config.waitTime,
                 searchInterval: config.searchInterval,
-                maxNoProgressCount: config.maxNoProgressCount,
-                isCollapsed: this.searchState.isCollapsed
+                maxNoProgressCount: config.maxNoProgressCount
             }));
         } catch (e) {
             console.warn('保存配置失败:', e);

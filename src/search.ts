@@ -1,10 +1,11 @@
 import { config } from './config';
-import { DailyTask, getDailyTaskSearchTerm, markDailyTaskSkipped, MAX_DAILY_TASK_ATTEMPTS, recordDailyTaskAttempt, store, sleep, getRandomInterval } from './state';
-import { updateStatus, updateCountdown, showCompletionNotification, setSearchButtonState } from './ui';
+import { DailyTask, getDailyTaskSearchTerm, markDailyTaskSkipped, MAX_DAILY_TASK_ATTEMPTS, MAX_PANEL_FAILURES, MAX_REST_CYCLES, MAX_TOTAL_SEARCH_ATTEMPTS, recordDailyTaskAttempt, store, sleep, getRandomInterval } from './state';
+import { updateStatus, updateCountdown, showCompletionNotification, setSearchButtonState, updateDailyTasksUI, updateProgressUI } from './ui';
 import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent, simulateTypingAndSearch, SEARCH_RESULT_SELECTOR } from './dom';
 import { getDataFromPanel, getSearchTermsFromMainDoc, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
 import { t } from './i18n';
 import { isDedicatedWorkerContext } from './worker';
+import { buildBingPageUrl, normalizeBingTaskUrl } from './navigation';
 
 export async function simulateScrollingAsync() {
     updateStatus(t('status', 'browsing'));
@@ -81,23 +82,27 @@ export function getExecutionPhase(): ExecutionPhase {
     if (!store.currentProgress.completed) return 'points';
 
     const hasQueuedCards = store.searchState.dailyTasksQueue.length > 0;
-    const hasUnfinishedCards = store.dailyTasksData.some(task => task.status === '未完成');
-    return hasQueuedCards || hasUnfinishedCards ? 'cards' : 'complete';
+    if (hasQueuedCards || !store.searchState.panelParsed) return 'cards';
+    return 'complete';
 }
 
 function getActiveDailyTaskForSearch(): DailyTask | null {
     if (getExecutionPhase() !== 'cards') return null;
     const task = store.searchState.dailyTasksQueue[0];
-    if (!task || task.attempts <= 0 || task.queryCandidates.length === 0) return null;
+    if (!task || task.kind !== 'search-promotion' || task.attempts <= 0 || task.searchTerms.length === 0) return null;
     return task;
 }
 
 export function getSearchTerm(task: DailyTask | null = getActiveDailyTaskForSearch()) {
     let term = '';
 
-    if (task && task.queryCandidates.length > 0) {
+    if (task?.kind === 'search-promotion') {
         term = getDailyTaskSearchTerm(task);
-        console.log(`使用卡片任务相关词汇: ${term}`);
+        if (!term) {
+            console.warn(`[RewardsHelper] 搜索推广卡 "${task.title}" 的固定词汇已用完`);
+            return '';
+        }
+        console.log(`使用搜索推广卡固定词汇: ${term}`);
     }
     
     if (!term && store.iframeSearchTerms && store.iframeSearchTerms.length > 0) {
@@ -172,7 +177,10 @@ async function runQueuedDailyTaskFromOpenPanel(): Promise<'clicked' | 'search' |
     const task = store.searchState.dailyTasksQueue[0];
     if (!task) return 'none';
 
-    if (task.attempts >= MAX_DAILY_TASK_ATTEMPTS) {
+    const maxAttempts = task.kind === 'search-promotion'
+        ? task.searchTerms.length + 1
+        : MAX_DAILY_TASK_ATTEMPTS;
+    if (task.attempts >= maxAttempts) {
         console.log(`[RewardsHelper] 任务 "${task.title}" 已达到最大尝试次数，跳过`);
         markDailyTaskSkipped(task);
         store.saveState();
@@ -181,21 +189,27 @@ async function runQueuedDailyTaskFromOpenPanel(): Promise<'clicked' | 'search' |
 
     if (task.attempts === 0 && task.url) {
         const taskClicked = await clickTaskCardAsync(task);
+        recordDailyTaskAttempt(task);
+        store.saveState();
         if (taskClicked) {
-            recordDailyTaskAttempt(task);
-            store.saveState();
             return 'clicked';
         }
     }
 
-    if (task.queryCandidates.length > 0) {
-        return 'search';
+    if (task.kind === 'search-promotion') {
+        const nextSearchTermIndex = Math.max(0, task.attempts - 1);
+        if (nextSearchTermIndex < task.searchTerms.length) {
+            return 'search';
+        }
+        markDailyTaskSkipped(task);
+        store.saveState();
+        return 'skipped';
     }
 
     if (task.url) {
         recordDailyTaskAttempt(task);
         store.saveState();
-        window.location.href = task.url;
+        window.location.href = normalizeBingTaskUrl(task.url);
         return 'clicked';
     }
 
@@ -204,47 +218,49 @@ async function runQueuedDailyTaskFromOpenPanel(): Promise<'clicked' | 'search' |
     return 'skipped';
 }
 
-export function stopAutomatedSearch() {
+export function stopAutomatedSearch(finalStatus?: string, preserveProgress = false) {
     if (store.countdownTimer) {
         clearInterval(store.countdownTimer);
         store.countdownTimer = null;
     }
 
-    store.isSearching = false;
-    store.searchState.currentAction = 'idle';
-    store.searchState.needRest = false;
-    store.searchState.dailyTasksQueue = [];
-    store.searchState.attemptedTasks = [];
-    store.saveState();
-    store.currentProgress.noProgressCount = 0;
-    store.usedSearchTerms = [];
+    store.resetRuntimeState(preserveProgress);
     updateCountdown(0, '');
 
-    store.clearState();
+    if (preserveProgress) store.saveState();
+    else store.clearState();
+    updateProgressUI();
+    updateDailyTasksUI(store.dailyTasksData);
     setSearchButtonState('idle');
-    updateStatus(t('status', 'searchStopped'));
+    updateStatus(finalStatus || t('status', 'searchStopped'));
 }
 
 export async function performSearch(task?: DailyTask | null) {
     if (!isDedicatedWorkerContext() || !store.isSearching) return;
+    if (store.searchState.totalSearchAttempts >= MAX_TOTAL_SEARCH_ATTEMPTS) {
+        stopAutomatedSearch(t('status', 'safetyStopped', MAX_TOTAL_SEARCH_ATTEMPTS));
+        return;
+    }
     
     const activeTask = getExecutionPhase() === 'cards' ? (task || getActiveDailyTaskForSearch()) : null;
     if (!activeTask) {
         await ensureFallbackSearchTerms();
     }
     const searchTerm = getSearchTerm(activeTask);
+    if (!searchTerm) {
+        if (activeTask) markDailyTaskSkipped(activeTask);
+        store.saveState();
+        return;
+    }
     if (activeTask) {
         recordDailyTaskAttempt(activeTask);
     }
+    store.searchState.totalSearchAttempts++;
     
     updateStatus(t('status', 'searching', searchTerm));
     store.saveState();
     
-    const searchUrl = new URL(window.location.href);
-    if (searchUrl.protocol === 'http:' || searchUrl.protocol === 'https:') searchUrl.pathname = '/search';
-    searchUrl.search = '';
-    searchUrl.hash = '';
-    searchUrl.searchParams.set('q', searchTerm);
+    const searchUrl = buildBingPageUrl('/search', { q: searchTerm });
     
     const typingSuccess = await simulateTypingAndSearch(searchTerm);
     if (typingSuccess) {
@@ -253,7 +269,7 @@ export async function performSearch(task?: DailyTask | null) {
         console.log('[RewardsHelper] 模拟提交后页面未发生跳转，使用 fallback 跳转');
     }
     
-    window.location.href = searchUrl.toString();
+    window.location.href = searchUrl;
 }
 
 export async function searchLoop() {
@@ -266,6 +282,19 @@ export async function searchLoop() {
             await waitForIframeContent(10000);
             getDataFromPanel();
             getSearchTermsFromMainDoc();
+
+            if (!store.searchState.panelParsed) {
+                store.searchState.panelFailureCount++;
+                store.saveState();
+                await closeRewardsSidebarAsync();
+                if (store.searchState.panelFailureCount >= MAX_PANEL_FAILURES) {
+                    stopAutomatedSearch(t('status', 'panelFailuresStopped', MAX_PANEL_FAILURES), true);
+                    return;
+                }
+                updateStatus(t('status', 'waitingPanelRetry'));
+                await countdownAsync(Math.floor(getRandomInterval() / 1000), 'waiting');
+                continue;
+            }
             
             const executionPhase = getExecutionPhase();
             let queuedTaskAction: 'clicked' | 'search' | 'skipped' | 'none' = 'none';
@@ -284,7 +313,8 @@ export async function searchLoop() {
             if (queuedTaskAction === 'search') {
                 updateStatus(t('status', 'executingPanel'));
                 await countdownAsync(2, 'waiting');
-                performSearch(store.searchState.dailyTasksQueue[0]);
+                await performSearch(store.searchState.dailyTasksQueue[0]);
+                if (store.isSearching) continue;
                 return;
             }
 
@@ -294,14 +324,18 @@ export async function searchLoop() {
             
             if (executionPhase === 'complete') {
                 showCompletionNotification();
-                updateStatus(t('status', 'allCompleted'));
-                stopAutomatedSearch();
+                stopAutomatedSearch(t('status', 'allCompleted'), true);
                 return;
             }
             
             if (store.searchState.needRest) {
                 store.searchState.needRest = false;
                 store.currentProgress.noProgressCount = 0;
+                store.searchState.restCycles++;
+                if (store.searchState.restCycles > MAX_REST_CYCLES) {
+                    stopAutomatedSearch(t('status', 'repeatedNoProgressStopped', MAX_REST_CYCLES), true);
+                    return;
+                }
                 updateStatus(t('status', 'resting', config.maxNoProgressCount, config.restTime / 60));
                 await countdownAsync(config.restTime, 'resting');
                 if (!store.isSearching) return;
@@ -310,17 +344,30 @@ export async function searchLoop() {
                 continue;
             }
         } else {
+            store.searchState.panelFailureCount++;
+            store.saveState();
+            if (store.searchState.panelFailureCount >= MAX_PANEL_FAILURES) {
+                stopAutomatedSearch(t('status', 'panelFailuresStopped', MAX_PANEL_FAILURES), true);
+                return;
+            }
             updateStatus(t('status', 'failedSidebarDirect'));
         }
         
         if (!store.isSearching) return;
         
-        updateStatus(getExecutionPhase() === 'points' ? t('status', 'pointsFirst') : t('status', 'waitingNext'));
+        const phase = getExecutionPhase();
+        if (phase === 'cards' && !store.searchState.panelParsed) {
+            updateStatus(t('status', 'waitingPanelRetry'));
+            await countdownAsync(Math.floor(getRandomInterval() / 1000), 'waiting');
+            continue;
+        }
+
+        updateStatus(phase === 'points' ? t('status', 'pointsFirst') : t('status', 'waitingNext'));
         const waitMs = getRandomInterval();
         await countdownAsync(Math.floor(waitMs / 1000), 'waiting');
         
         if (store.isSearching) {
-            performSearch();
+            await performSearch();
             return; // page will navigate, loop ends
         }
     }
@@ -339,6 +386,7 @@ export async function startAutomatedSearch() {
     console.log('[RewardsHelper] 准备工作就绪，启动后台任务');
     store.isSearching = true;
     store.searchState.needRest = false;
+    store.searchState.panelFailureCount = 0;
     store.currentProgress.noProgressCount = 0;
     store.usedSearchTerms = [];
     
@@ -346,5 +394,5 @@ export async function startAutomatedSearch() {
     updateStatus(t('status', 'autoStarted'));
     store.saveState();
     
-    searchLoop();
+    await searchLoop();
 }
