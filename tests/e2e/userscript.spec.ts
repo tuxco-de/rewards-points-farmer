@@ -17,6 +17,7 @@ type SavedState = {
   usedSearchTerms?: string[];
   mainPageSearchTerms?: string[];
   iframeSearchTerms?: string[];
+  totalSearchAttempts?: number;
   dailyTasksQueue?: Array<{
     url: string;
     title: string;
@@ -32,7 +33,7 @@ type SavedState = {
 async function loadUserscriptFixture(
   page: Page,
   savedState?: SavedState,
-  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; englishSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean } = {}
+  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; englishSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean } = {}
 ) {
   if (savedState) {
     await page.context().addInitScript(state => {
@@ -77,6 +78,7 @@ async function loadUserscriptFixture(
   if (options.englishSummary) url.searchParams.set('englishSummary', '1');
   if (options.hundredTotal) url.searchParams.set('hundredTotal', '1');
   if (options.completedCard) url.searchParams.set('completedCard', '1');
+  if (options.reactiveAutocomplete) url.searchParams.set('reactiveAutocomplete', '1');
   await page.goto(url.toString());
   await page.waitForFunction(() => typeof (window as any).startRewardsTask === 'function');
 }
@@ -302,6 +304,30 @@ test('accepts a 100-point search total', async ({ page }) => {
 
   await expect(page.locator('#rh-progress-text')).toHaveText('0/100', { timeout: 6_000 });
   expect(await page.evaluate(() => (window as any).__e2e_getExecutionPhase())).toBe('points');
+});
+
+test('counts no progress when a completed search attempt still leaves progress at zero', async ({ page }) => {
+  await loadUserscriptFixture(page, {
+    isSearching: true,
+    currentProgress: {
+      current: 0,
+      total: 200,
+      lastChecked: 0,
+      completed: false,
+      noProgressCount: 0,
+    },
+    totalSearchAttempts: 1,
+    usedSearchTerms: ['search attempt without points'],
+    dailyTasksQueue: [],
+    attemptedTasks: [],
+  }, { worker: true, modernLayout: true });
+
+  await expect
+    .poll(() => page.evaluate(() => {
+      const state = JSON.parse(localStorage.getItem('bing_rewards_auto_searcher_state') || '{}');
+      return state.currentProgress?.noProgressCount;
+    }), { timeout: 8_000 })
+    .toBe(1);
 });
 
 test('does not queue a completed card whose point label still says points', async ({ page }) => {
@@ -581,7 +607,7 @@ test('exposes an e2e hook that can submit through the Bing search form', async (
 });
 
 test('submits through the redesigned semantic Bing search form', async ({ page }) => {
-  await loadUserscriptFixture(page, undefined, { modernLayout: true });
+  await loadUserscriptFixture(page, undefined, { modernLayout: true, reactiveAutocomplete: true });
 
   await expect(page.locator('#sb_form_q')).toHaveCount(0);
   await expect(page.locator('#sb_form_go')).toHaveCount(0);
@@ -593,4 +619,5 @@ test('submits through the redesigned semantic Bing search form', async ({ page }
   await expect
     .poll(() => page.evaluate(() => document.body.dataset.lastQuery))
     .toBe('modern playwright check');
+  expect(await page.evaluate(() => document.body.dataset.inputEventCount)).toBe('1');
 });

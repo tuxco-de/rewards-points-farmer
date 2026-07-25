@@ -202,34 +202,29 @@ export async function simulateTypingAndSearch(searchTerm: string): Promise<boole
         await sleep(100);
 
         const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-        if (valueSetter) valueSetter.call(input, '');
-        else input.value = '';
+        if (valueSetter) valueSetter.call(input, searchTerm);
+        else input.value = searchTerm;
         input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        await sleep(100);
-
-        for (let i = 0; i < searchTerm.length; i++) {
-            const nextValue = input.value + searchTerm[i];
-            if (valueSetter) valueSetter.call(input, nextValue);
-            else input.value = nextValue;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            await sleep(50 + Math.random() * 150);
-        }
-        
         input.dispatchEvent(new Event('change', { bubbles: true }));
         await sleep(200 + Math.random() * 300);
 
         const searchBtn = findVisibleElement(SEARCH_SUBMIT_SELECTOR);
         const searchForm = input.closest('form') || document.querySelector(SEARCH_FORM_SELECTOR) as HTMLFormElement | null;
 
-        if (searchBtn) {
+        if (searchForm) {
+            const submitter = searchBtn instanceof HTMLButtonElement || (
+                searchBtn instanceof HTMLInputElement &&
+                (searchBtn.type === 'submit' || searchBtn.type === 'image')
+            )
+                ? searchBtn
+                : undefined;
+            searchForm.requestSubmit(submitter);
+            console.log('[RewardsHelper] 通过表单提交搜索');
+            return true;
+        } else if (searchBtn) {
             await simulateMouseInteraction(searchBtn);
             searchBtn.click();
             console.log('[RewardsHelper] 通过点击按钮提交搜索');
-            return true;
-        } else if (searchForm) {
-            searchForm.requestSubmit();
-            console.log('[RewardsHelper] 通过表单提交搜索');
             return true;
         } else {
             console.log('[RewardsHelper] 未找到搜索按钮或表单，使用键盘回车事件提交');

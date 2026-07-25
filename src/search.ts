@@ -260,7 +260,7 @@ export async function performSearch(task?: DailyTask | null) {
     updateStatus(t('status', 'searching', searchTerm));
     store.saveState();
     
-    const searchUrl = buildBingPageUrl('/search', { q: searchTerm });
+    const searchUrl = buildBingPageUrl('/search', { q: searchTerm, form: 'QBRE' });
     
     const typingSuccess = await simulateTypingAndSearch(searchTerm);
     if (typingSuccess) {

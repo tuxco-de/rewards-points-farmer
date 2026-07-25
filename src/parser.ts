@@ -582,7 +582,8 @@ export function getDataFromPanel() {
             store.currentProgress.total = currentBestProgress.max;
             console.log('搜索进度: ' + current + '/' + store.currentProgress.total);
 
-            if (store.currentProgress.lastChecked > 0 && current <= store.currentProgress.lastChecked && store.isSearching) {
+            const hasAttemptedSearch = store.searchState.totalSearchAttempts > 0;
+            if (hasAttemptedSearch && current <= store.currentProgress.lastChecked && store.isSearching) {
                 console.log(`进度未增加: ${current} <= ${store.currentProgress.lastChecked}，已连续 ${store.currentProgress.noProgressCount + 1} 次未增加`);
                 store.currentProgress.noProgressCount++;
 
