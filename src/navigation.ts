@@ -42,6 +42,29 @@ export function buildBingPageUrl(
     return target.toString();
 }
 
+function createBingClientId(): string {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID().replace(/-/g, '').toUpperCase();
+    }
+    return Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16))
+        .join('')
+        .toUpperCase();
+}
+
+export function buildBingSearchUrl(query: string, baseHref = window.location.href): string {
+    const normalizedQuery = query.trim();
+    return buildBingPageUrl('/search', {
+        q: normalizedQuery,
+        qs: 'n',
+        form: 'QBRE',
+        sp: '-1',
+        lq: '0',
+        pq: normalizedQuery,
+        sk: '',
+        cvid: createBingClientId()
+    }, baseHref);
+}
+
 export function normalizeBingTaskUrl(value: string, baseHref = window.location.href): string {
     const current = new URL(baseHref);
     const task = new URL(value, current);

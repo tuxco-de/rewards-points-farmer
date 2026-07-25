@@ -1,4 +1,4 @@
-import { buildBingPageUrl, normalizeBingTaskUrl } from '../../src/navigation';
+import { buildBingPageUrl, buildBingSearchUrl, normalizeBingTaskUrl } from '../../src/navigation';
 
 describe('Bing navigation', () => {
     test('preserves locale parameters and removes unrelated search parameters', () => {
@@ -25,6 +25,26 @@ describe('Bing navigation', () => {
 
         expect(result.origin).toBe('https://www.bing.com');
         expect(result.searchParams.get('mkt')).toBe('en-US');
+    });
+
+    test('builds a native-style fallback search URL without hard-coding UI state', () => {
+        const result = new URL(buildBingSearchUrl(
+            '  spacex  ',
+            'https://www.bing.com/search?mkt=en-US'
+        ));
+
+        expect(result.pathname).toBe('/search');
+        expect(result.searchParams.get('q')).toBe('spacex');
+        expect(result.searchParams.get('qs')).toBe('n');
+        expect(result.searchParams.get('form')).toBe('QBRE');
+        expect(result.searchParams.get('sp')).toBe('-1');
+        expect(result.searchParams.get('lq')).toBe('0');
+        expect(result.searchParams.get('pq')).toBe('spacex');
+        expect(result.searchParams.get('sk')).toBe('');
+        expect(result.searchParams.get('mkt')).toBe('en-US');
+        expect(result.searchParams.get('cvid')).toMatch(/^[A-F0-9]{32}$/);
+        expect(result.searchParams.has('ghc')).toBe(false);
+        expect(result.searchParams.has('sc')).toBe(false);
     });
 
     test('keeps task navigation on the active search origin', () => {

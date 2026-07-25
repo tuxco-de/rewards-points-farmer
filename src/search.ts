@@ -5,7 +5,7 @@ import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarA
 import { getDataFromPanel, getSearchTermsFromMainDoc, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
 import { t } from './i18n';
 import { isDedicatedWorkerContext } from './worker';
-import { buildBingPageUrl, normalizeBingTaskUrl } from './navigation';
+import { buildBingSearchUrl, normalizeBingTaskUrl } from './navigation';
 
 export async function simulateScrollingAsync() {
     updateStatus(t('status', 'browsing'));
@@ -260,7 +260,7 @@ export async function performSearch(task?: DailyTask | null) {
     updateStatus(t('status', 'searching', searchTerm));
     store.saveState();
     
-    const searchUrl = buildBingPageUrl('/search', { q: searchTerm, form: 'QBRE' });
+    const searchUrl = buildBingSearchUrl(searchTerm);
     
     const typingSuccess = await simulateTypingAndSearch(searchTerm);
     if (typingSuccess) {
