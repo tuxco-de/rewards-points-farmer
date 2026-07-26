@@ -33,7 +33,7 @@ type SavedState = {
 async function loadUserscriptFixture(
   page: Page,
   savedState?: SavedState,
-  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; englishSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean } = {}
+  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean } = {}
 ) {
   if (savedState) {
     await page.context().addInitScript(state => {
@@ -76,6 +76,7 @@ async function loadUserscriptFixture(
   if (options.pointsComplete) url.searchParams.set('pointsComplete', '1');
   if (options.modernLayout) url.searchParams.set('modernLayout', '1');
   if (options.englishSummary) url.searchParams.set('englishSummary', '1');
+  if (options.completedChineseSummary) url.searchParams.set('completedChineseSummary', '1');
   if (options.hundredTotal) url.searchParams.set('hundredTotal', '1');
   if (options.completedCard) url.searchParams.set('completedCard', '1');
   if (options.reactiveAutocomplete) url.searchParams.set('reactiveAutocomplete', '1');
@@ -299,6 +300,21 @@ test('prefers the multiline English earned summary over an unrelated 80-point fr
   expect(await page.evaluate(() => (window as any).__e2e_getExecutionPhase())).toBe('points');
 });
 
+test('uses the completed Chinese reward-points summary instead of an unrelated search fraction', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, {
+    worker: true,
+    modernLayout: true,
+    completedChineseSummary: true,
+  });
+
+  await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
+  expect(await page.evaluate(() => (window as any).__e2e_getCurrentProgress())).toMatchObject({
+    current: 200,
+    total: 200,
+    completed: true,
+  });
+});
+
 test('accepts a 100-point search total', async ({ page }) => {
   await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true, hundredTotal: true });
 
@@ -358,6 +374,88 @@ test('parses the redesigned Rewards entry, progress and promo cards', async ({ p
   );
   expect(await page.evaluate(() => document.body.dataset.rewardsToggleCount)).toBe('1');
   expect(await page.evaluate(() => document.body.dataset.javascriptNavigation)).toBeUndefined();
+});
+
+test.describe('Rewards DOM value integration matrix', () => {
+  const scenarios = [
+    {
+      name: 'legacy numeric progress',
+      options: { worker: true },
+      expected: { current: 0, total: 90, completed: false },
+    },
+    {
+      name: 'legacy multiline English summary',
+      options: { worker: true, englishSummary: true },
+      expected: { current: 80, total: 200, completed: false },
+    },
+    {
+      name: 'modern 200-point progress',
+      options: { worker: true, modernLayout: true },
+      expected: { current: 0, total: 200, completed: false },
+    },
+    {
+      name: 'modern 100-point progress',
+      options: { worker: true, modernLayout: true, hundredTotal: true },
+      expected: { current: 0, total: 100, completed: false },
+    },
+    {
+      name: 'modern completed numeric progress',
+      options: { worker: true, modernLayout: true, pointsComplete: true },
+      expected: { current: 200, total: 200, completed: true },
+    },
+    {
+      name: 'modern completed Chinese reward-points summary',
+      options: { worker: true, modernLayout: true, completedChineseSummary: true },
+      expected: { current: 200, total: 200, completed: true },
+    },
+  ] as const;
+
+  for (const scenario of scenarios) {
+    test(`parses ${scenario.name}`, async ({ page }) => {
+      await loadUserscriptFixture(page, undefined, scenario.options);
+
+      await expect
+        .poll(() => page.evaluate(() => (window as any).__e2e_getCurrentProgress()), { timeout: 6_000 })
+        .toMatchObject(scenario.expected);
+    });
+  }
+
+  test('collects progress, cards and search terms in one parsed snapshot', async ({ page }) => {
+    await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true });
+
+    await expect(page.locator('#rh-progress-text')).toHaveText('0/200', { timeout: 6_000 });
+    const snapshot = await page.evaluate(() => (window as any).__e2e_getParsedSnapshot());
+
+    expect(snapshot.currentProgress).toMatchObject({ current: 0, total: 200, completed: false });
+    expect(snapshot.dailyTasksData).toEqual([
+      { name: '查找住宿地点', status: '未完成' },
+      { name: 'NASA Artemis mission', status: '未完成' },
+    ]);
+    expect(snapshot.dailyTasksQueue).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: '查找住宿地点',
+        points: 10,
+        kind: 'search-promotion',
+        source: 'card',
+        searchTerms: ['住宿地点', '适合周末旅行的住宿地点'],
+      }),
+      expect.objectContaining({
+        title: 'NASA Artemis mission',
+        points: 10,
+        kind: 'search-promotion',
+        source: 'card',
+        searchTerms: ['NASA Artemis mission', 'Artemis II launch'],
+      }),
+    ]));
+    expect(snapshot.mainPageSearchTerms).toEqual(expect.arrayContaining([
+      'weather forecast',
+      'technology news',
+    ]));
+    expect(snapshot.iframeSearchTerms).toEqual(expect.arrayContaining([
+      'summer travel',
+      'technology news',
+    ]));
+  });
 });
 
 test('refreshes persisted promotion terms from the repository config', async ({ page }) => {

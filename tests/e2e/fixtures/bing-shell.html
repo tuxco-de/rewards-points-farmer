@@ -60,6 +60,7 @@
       const modernLayout = params.get('modernLayout') === '1';
       const pointsComplete = params.get('pointsComplete') === '1';
       const englishSummary = params.get('englishSummary') === '1';
+      const completedChineseSummary = params.get('completedChineseSummary') === '1';
       const claimablePoints = params.get('claimablePoints') === '1';
       const hundredTotal = params.get('hundredTotal') === '1';
       const completedCard = params.get('completedCard') === '1';
@@ -101,16 +102,26 @@
             </section>
           </body>
         </html>`;
+      const modernProgressMarkup = completedChineseSummary
+        ? `<div class="earned-summary">
+             <p>你已获得 200 积分！</p>
+             <p>每天继续搜索并获得最多 200 奖励积分</p>
+           </div>
+           <div class="search_earn_card">
+             <span>其他搜索任务</span>
+             <span>0 / 70</span>
+           </div>`
+        : `<div class="search_earn_card">
+             <span>每日搜索</span>
+             <span>${searchProgress}</span>
+           </div>`;
       const modernFlyoutMarkup = `
         <!doctype html>
         <html>
           <body>
             <main id="app" aria-label="Microsoft Rewards">
               <section class="flyout_exb_card">
-                <div class="search_earn_card">
-                  <span>每日搜索</span>
-                  <span>${searchProgress}</span>
-                </div>
+                ${modernProgressMarkup}
                 <div id="exb-activityChecklist">
                   <div class="promo_cont">
                     <a class="block" href="/search?q=https%3A%2F%2Fwww.bing.com%2Frewards">

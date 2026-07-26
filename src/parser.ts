@@ -20,7 +20,7 @@ export function parseEarnedProgressText(value: string): EarnedProgress | null {
     const incompleteRules = [
         {
             rule: 'earned_zh',
-            match: /你已获得\s*(\d+)\s*积分.{0,300}?每天继续搜索并获得最多\s*(\d+)\s*积分/
+            match: /你已获得\s*(\d+)\s*(?:奖励\s*)?积分.{0,300}?每天继续搜索并获得最多\s*(\d+)\s*(?:奖励\s*)?积分/
         },
         {
             rule: 'earned_en',
@@ -44,7 +44,7 @@ export function parseEarnedProgressText(value: string): EarnedProgress | null {
     const completedRules = [
         {
             rule: 'completed_zh',
-            match: /你已获得\s*(\d+)\s*积分.{0,120}?(?:今日|每天|每日).{0,30}?搜索.{0,30}?(?:已完成|全部完成)/
+            match: /你已获得\s*(\d+)\s*(?:奖励\s*)?积分.{0,120}?(?:今日|每天|每日).{0,30}?搜索.{0,30}?(?:已完成|全部完成)/
         },
         {
             rule: 'completed_en',

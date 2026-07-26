@@ -19,6 +19,8 @@ declare global {
         __e2e_simulateTypingAndSearch: (term: string) => Promise<boolean>;
         __e2e_getSearchTerm: () => string;
         __e2e_getExecutionPhase: () => string;
+        __e2e_getCurrentProgress: () => unknown;
+        __e2e_getParsedSnapshot: () => unknown;
         __e2e_getDailyTaskQueue: () => unknown[];
         __e2e_isDedicatedWorker: () => boolean;
         __e2e_isLocalSearchRunning: () => boolean;
@@ -202,6 +204,17 @@ if (window === window.top) {
         window.__e2e_simulateTypingAndSearch = simulateTypingAndSearch;
         window.__e2e_getSearchTerm = getSearchTerm;
         window.__e2e_getExecutionPhase = getExecutionPhase;
+        window.__e2e_getCurrentProgress = () => ({ ...store.currentProgress });
+        window.__e2e_getParsedSnapshot = () => ({
+            currentProgress: { ...store.currentProgress },
+            dailyTasksData: store.dailyTasksData.map(task => ({ ...task })),
+            dailyTasksQueue: store.searchState.dailyTasksQueue.map(task => ({
+                ...task,
+                searchTerms: [...task.searchTerms]
+            })),
+            mainPageSearchTerms: [...store.mainPageSearchTerms],
+            iframeSearchTerms: [...store.iframeSearchTerms]
+        });
         window.__e2e_getDailyTaskQueue = () => store.searchState.dailyTasksQueue.map(task => ({
             ...task,
             searchTerms: [...task.searchTerms]

@@ -5,6 +5,8 @@ import path from 'node:path';
 const userscriptPath = path.resolve(__dirname, '../../dist/rewards-points-farmer.user.js');
 const storageStatePath = path.resolve(__dirname, '../../playwright/.auth/bing.json');
 const cookieHeader = process.env.PLAYWRIGHT_BING_COOKIE_HEADER?.trim() || '';
+const expectedSearchCurrent = Number(process.env.PLAYWRIGHT_EXPECTED_SEARCH_CURRENT || '');
+const expectedSearchTotal = Number(process.env.PLAYWRIGHT_EXPECTED_SEARCH_TOTAL || '');
 const liveUrl = 'https://www.bing.com/search?q=playwright%20smoke';
 const rewardsEntrySelector = [
   '#id_rh_w',
@@ -27,7 +29,7 @@ test.use({
   video: 'off',
 });
 
-async function createLivePage(browser: Browser, options: { worker?: boolean } = {}) {
+async function createLivePage(browser: Browser, options: { worker?: boolean; preopenRewards?: boolean } = {}) {
   const contextOptions: BrowserContextOptions = {
     locale: 'zh-CN',
     timezoneId: 'Asia/Shanghai',
@@ -47,6 +49,26 @@ async function createLivePage(browser: Browser, options: { worker?: boolean } = 
     await context.addCookies(cookies);
   }
   const page = await context.newPage();
+  if (options.preopenRewards) {
+    await page.addInitScript(() => {
+      window.addEventListener('DOMContentLoaded', () => {
+        setTimeout(() => {
+          const entrySelectors = [
+            '#id_rh_w',
+            '[aria-controls="rewid-f"]',
+            'a[role="button"][aria-label*="Microsoft Rewards" i]',
+            'button[aria-label*="Microsoft Rewards" i]',
+            '.points-container',
+            '#id_rc',
+          ];
+          const entry = entrySelectors
+            .flatMap(selector => Array.from(document.querySelectorAll(selector)))
+            .find(element => element.id !== 'rh-badge' && element.getBoundingClientRect().width > 0);
+          if (entry instanceof HTMLElement) entry.click();
+        }, 200);
+      }, { once: true });
+    });
+  }
   await page.addInitScript({ path: userscriptPath });
   const targetUrl = new URL(liveUrl);
   if (options.worker) targetUrl.searchParams.set('rewards_helper_worker', '1');
@@ -161,6 +183,41 @@ test.describe('live Bing smoke @live', () => {
     await expectSearchNotStarted(page);
 
     await context.close();
+  });
+
+  test('parses expected authenticated search progress from the live DOM', async ({ browser }) => {
+    test.skip(
+      !Number.isFinite(expectedSearchCurrent) || !Number.isFinite(expectedSearchTotal) || expectedSearchTotal <= 0,
+      'Set PLAYWRIGHT_EXPECTED_SEARCH_CURRENT and PLAYWRIGHT_EXPECTED_SEARCH_TOTAL for live progress validation.'
+    );
+    const { context, page } = await createLivePage(browser, { worker: true, preopenRewards: true });
+
+    try {
+      await expect
+        .poll(
+          () => page
+            .evaluate(() => (window as any).__e2e_getCurrentProgress?.() || null)
+            .catch(() => null),
+          { timeout: 20_000 }
+        )
+        .toMatchObject({
+          current: expectedSearchCurrent,
+          total: expectedSearchTotal,
+          completed: expectedSearchCurrent >= expectedSearchTotal,
+        });
+
+      const snapshot = await page.evaluate(() => (window as any).__e2e_getParsedSnapshot());
+      expect(snapshot.currentProgress).toMatchObject({
+        current: expectedSearchCurrent,
+        total: expectedSearchTotal,
+      });
+      expect(snapshot.dailyTasksData).toBeInstanceOf(Array);
+      expect(snapshot.dailyTasksQueue).toBeInstanceOf(Array);
+      expect(snapshot.mainPageSearchTerms).toBeInstanceOf(Array);
+      expect(snapshot.iframeSearchTerms).toBeInstanceOf(Array);
+    } finally {
+      await context.close();
+    }
   });
 
   test('executes one live card follow-up search without using a URL @live-card', async ({ browser }) => {

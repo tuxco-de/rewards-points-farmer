@@ -22,4 +22,15 @@ describe('Rewards parser', () => {
             completed: false
         });
     });
+
+    test('parses a completed Chinese summary that labels the total as reward points', () => {
+        expect(parseEarnedProgressText(
+            '你已获得 200 积分！每天继续搜索并获得最多 200 奖励积分'
+        )).toMatchObject({
+            current: 200,
+            total: 200,
+            completed: true,
+            rule: 'earned_zh'
+        });
+    });
 });
