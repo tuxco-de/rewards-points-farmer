@@ -151,6 +151,52 @@ function discoverCards(doc: Document): Set<Element> {
     return cardsArray;
 }
 
+export function isRewardsTaskCard(card: Element): boolean {
+    const link = card.tagName.toLowerCase() === 'a' ? card : card.querySelector('a');
+    const href = link ? (link.getAttribute('href') || '').trim() : '';
+    const ariaLabel = card.getAttribute('aria-label') || '';
+
+    if (!href) {
+        console.log(`[RewardsHelper] 剔除卡片 (缺少任务链接): aria="${ariaLabel}"`);
+        return false;
+    }
+
+    const isChecklistTask = Boolean(card.closest('#exb-activityChecklist'));
+    const hasTrustedTaskShape = isChecklistTask || card.matches(
+        '#exclusive_promo_cont, [data-task-id], .promo_cont.slim, .rw-card, .explore-card, .task-card'
+    );
+
+    // The Rewards flyout reuses .promo_cont for summaries, redemption links,
+    // referrals, Cashback and shopping promotions. Real activity cards have a
+    // checklist ancestor or one of the task-specific markers above.
+    if (card.matches('.promo_cont') && !hasTrustedTaskShape) {
+        console.log(`[RewardsHelper] 剔除卡片 (普通推广卡): aria="${ariaLabel}"`);
+        return false;
+    }
+
+    const normalizedHref = href.toLowerCase();
+    const isRelativeBingPath = normalizedHref.startsWith('/') && !normalizedHref.startsWith('//');
+    if (!isRelativeBingPath) {
+        try {
+            const parsedUrl = new URL(normalizedHref, window.location.href);
+            if ((parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') || !isBingHost(parsedUrl.hostname)) {
+                console.log(`[RewardsHelper] 剔除卡片 (非 Bing 链接): aria="${ariaLabel}", href="${normalizedHref.substring(0, 40)}"`);
+                return false;
+            }
+        } catch {
+            return false;
+        }
+    }
+
+    const points = getCardPoints(card);
+    if (points <= 0 && !hasTrustedTaskShape) {
+        console.log(`[RewardsHelper] 剔除卡片 (无积分且缺少任务标识): aria="${ariaLabel}"`);
+        return false;
+    }
+
+    return true;
+}
+
 function filterCards(cardsArray: Set<Element>): Element[] {
     return Array.from(cardsArray).filter(card => {
         for (let other of cardsArray) {
@@ -158,34 +204,8 @@ function filterCards(cardsArray: Set<Element>): Element[] {
                 return false;
             }
         }
-        
-        const link = card.tagName.toLowerCase() === 'a' ? card : card.querySelector('a');
-        const href = link ? (link.getAttribute('href') || '').toLowerCase() : '';
-        const ariaLabel = card.getAttribute('aria-label') || '';
-        
-        const isRelativeBingPath = href.startsWith('/') && !href.startsWith('//');
-        if (href && !isRelativeBingPath) {
-            try {
-                const parsedUrl = new URL(href, window.location.href);
-                if ((parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') || !isBingHost(parsedUrl.hostname)) {
-                    console.log(`[RewardsHelper] 剔除卡片 (非 Bing 链接): aria="${ariaLabel}", href="${href.substring(0, 40)}"`);
-                    return false;
-                }
-            } catch {
-                return false;
-            }
-        }
-        
-        const points = getCardPoints(card);
-        const hasTrustedTaskShape = card.matches(
-            '#exb-activityChecklist .promo_cont, [data-task-id], [data-offer-id], .promo_cont, .rw-card, .explore-card, .task-card'
-        ) || Boolean(card.closest('.promo_cont, #exb-activityChecklist'));
-        if (points <= 0 && !hasTrustedTaskShape) {
-            console.log(`[RewardsHelper] 剔除卡片 (无积分且缺少任务标识): aria="${ariaLabel}"`);
-            return false;
-        }
-        
-        return true;
+
+        return isRewardsTaskCard(card);
     });
 }
 
