@@ -65,6 +65,16 @@
       const hundredTotal = params.get('hundredTotal') === '1';
       const completedCard = params.get('completedCard') === '1';
       const reactiveAutocomplete = params.get('reactiveAutocomplete') === '1';
+      const unconfiguredPromotion = params.get('unconfiguredPromotion') === '1';
+      const unconfiguredEnglishPromotion = params.get('unconfiguredEnglishPromotion') === '1';
+      const firstPromotionTitle = unconfiguredEnglishPromotion
+        ? 'Plan your future'
+        : (unconfiguredPromotion ? '规划你的未来' : '查找住宿地点');
+      const firstPromotionDescription = unconfiguredEnglishPromotion
+        ? 'Search Bing for personal and student loan options'
+        : (unconfiguredPromotion
+            ? '在 Bing 上搜索以比较个人和学生贷款选项'
+            : '在 Bing 上搜索适合周末旅行的住宿地点');
       const searchProgress = pointsComplete
         ? (modernLayout ? '200 / 200' : '90 / 90')
         : (hundredTotal ? '0 / 100' : (modernLayout ? '0 / 200' : '0 / 90'));
@@ -125,9 +135,9 @@
                 <div id="exb-activityChecklist">
                   <div class="promo_cont">
                     <a class="block" href="/search?q=https%3A%2F%2Fwww.bing.com%2Frewards">
-                      <p class="promo-title">查找住宿地点</p>
+                      <p class="promo-title">${firstPromotionTitle}</p>
                       <div class="shortPoint point" aria-label="10 积分">10</div>
-                      <div class="promo-desc">在 Bing 上搜索适合周末旅行的住宿地点</div>
+                      <div class="promo-desc">${firstPromotionDescription}</div>
                     </a>
                   </div>
                   <div class="promo_cont" ${completedCard ? 'aria-label="NASA Artemis mission is completed"' : ''}>

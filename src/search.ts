@@ -173,6 +173,12 @@ export function getSearchTerm(task: DailyTask | null = getActiveDailyTaskForSear
     return term;
 }
 
+function skipDailyTask(task: DailyTask) {
+    markDailyTaskSkipped(task);
+    updateDailyTasksUI(store.dailyTasksData);
+    store.saveState();
+}
+
 async function runQueuedDailyTaskFromOpenPanel(): Promise<'clicked' | 'search' | 'skipped' | 'none'> {
     const task = store.searchState.dailyTasksQueue[0];
     if (!task) return 'none';
@@ -182,8 +188,7 @@ async function runQueuedDailyTaskFromOpenPanel(): Promise<'clicked' | 'search' |
         : MAX_DAILY_TASK_ATTEMPTS;
     if (task.attempts >= maxAttempts) {
         console.log(`[RewardsHelper] 任务 "${task.title}" 已达到最大尝试次数，跳过`);
-        markDailyTaskSkipped(task);
-        store.saveState();
+        skipDailyTask(task);
         return 'skipped';
     }
 
@@ -201,8 +206,7 @@ async function runQueuedDailyTaskFromOpenPanel(): Promise<'clicked' | 'search' |
         if (nextSearchTermIndex < task.searchTerms.length) {
             return 'search';
         }
-        markDailyTaskSkipped(task);
-        store.saveState();
+        skipDailyTask(task);
         return 'skipped';
     }
 
@@ -213,8 +217,7 @@ async function runQueuedDailyTaskFromOpenPanel(): Promise<'clicked' | 'search' |
         return 'clicked';
     }
 
-    markDailyTaskSkipped(task);
-    store.saveState();
+    skipDailyTask(task);
     return 'skipped';
 }
 
@@ -248,8 +251,8 @@ export async function performSearch(task?: DailyTask | null) {
     }
     const searchTerm = getSearchTerm(activeTask);
     if (!searchTerm) {
-        if (activeTask) markDailyTaskSkipped(activeTask);
-        store.saveState();
+        if (activeTask) skipDailyTask(activeTask);
+        else store.saveState();
         return;
     }
     if (activeTask) {
@@ -280,10 +283,10 @@ export async function searchLoop() {
         
         if (await openRewardsSidebarAsync()) {
             await waitForIframeContent(10000);
-            getDataFromPanel();
+            const panelParsed = getDataFromPanel();
             getSearchTermsFromMainDoc();
 
-            if (!store.searchState.panelParsed) {
+            if (!panelParsed || !store.searchState.panelParsed) {
                 store.searchState.panelFailureCount++;
                 store.saveState();
                 await closeRewardsSidebarAsync();
@@ -319,6 +322,13 @@ export async function searchLoop() {
             }
 
             if (queuedTaskAction === 'skipped') {
+                if (getExecutionPhase() === 'complete') {
+                    showCompletionNotification();
+                    stopAutomatedSearch(t('status', 'allCompleted'), true);
+                    return;
+                }
+                updateStatus(t('status', 'skippedTaskContinuing'));
+                await sleep(100);
                 continue;
             }
             

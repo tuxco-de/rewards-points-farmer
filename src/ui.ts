@@ -583,9 +583,12 @@ export function updateDailyTasksUI(tasks: any[]) {
 
     const allCompleted = tasks.every(t => t.status === '已完成');
     const completedCount = tasks.filter(t => t.status === '已完成').length;
+    const skippedCount = tasks.filter(t => t.status === '已跳过').length;
     
     if (tasksCount) {
-        tasksCount.textContent = `(${completedCount}/${tasks.length})`;
+        tasksCount.textContent = skippedCount > 0
+            ? t('parser', 'taskCountWithSkipped', completedCount, tasks.length, skippedCount)
+            : `(${completedCount}/${tasks.length})`;
     }
 
     if (allCompleted) {
@@ -596,21 +599,23 @@ export function updateDailyTasksUI(tasks: any[]) {
     tasksList.innerHTML = '';
     tasks.forEach(task => {
         const isCompleted = task.status === '已完成';
+        const isSkipped = task.status === '已跳过';
         
         const taskElem = document.createElement('div');
         taskElem.className = 'rh-task-item';
         taskElem.title = task.name; // Tooltip for full name
         
         const icon = document.createElement('span');
-        icon.textContent = isCompleted ? '✅' : '⏳';
+        icon.textContent = isCompleted ? '✅' : (isSkipped ? '⏭️' : '⏳');
         
         const nameSpan = document.createElement('span');
         nameSpan.className = 'rh-task-name';
         nameSpan.textContent = task.name;
-        if (isCompleted) {
+        if (isCompleted || isSkipped) {
             nameSpan.style.textDecoration = 'line-through';
             nameSpan.style.color = 'var(--rh-text-sec)';
         }
+        if (isSkipped) taskElem.title = `${task.name} (${t('parser', 'skipped')})`;
         
         taskElem.appendChild(icon);
         taskElem.appendChild(nameSpan);

@@ -33,7 +33,7 @@ type SavedState = {
 async function loadUserscriptFixture(
   page: Page,
   savedState?: SavedState,
-  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean } = {}
+  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean; unconfiguredPromotion?: boolean; unconfiguredEnglishPromotion?: boolean } = {}
 ) {
   if (savedState) {
     await page.context().addInitScript(state => {
@@ -80,6 +80,8 @@ async function loadUserscriptFixture(
   if (options.hundredTotal) url.searchParams.set('hundredTotal', '1');
   if (options.completedCard) url.searchParams.set('completedCard', '1');
   if (options.reactiveAutocomplete) url.searchParams.set('reactiveAutocomplete', '1');
+  if (options.unconfiguredPromotion) url.searchParams.set('unconfiguredPromotion', '1');
+  if (options.unconfiguredEnglishPromotion) url.searchParams.set('unconfiguredEnglishPromotion', '1');
   await page.goto(url.toString());
   await page.waitForFunction(() => typeof (window as any).startRewardsTask === 'function');
 }
@@ -376,6 +378,52 @@ test('parses the redesigned Rewards entry, progress and promo cards', async ({ p
   expect(await page.evaluate(() => document.body.dataset.javascriptNavigation)).toBeUndefined();
 });
 
+test('warns and uses description-first fallback terms for an unconfigured search promotion', async ({ page }) => {
+  const consoleMessages: string[] = [];
+  page.on('console', message => consoleMessages.push(message.text()));
+
+  await loadUserscriptFixture(page, undefined, {
+    worker: true,
+    modernLayout: true,
+    unconfiguredPromotion: true,
+  });
+
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)', { timeout: 6_000 });
+  const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
+  const task = queue.find((item: { title: string }) => item.title === '规划你的未来');
+
+  expect(task).toMatchObject({
+    kind: 'search-promotion',
+    searchTerms: ['个人贷款', '学生贷款'],
+  });
+  await expect.poll(() => consoleMessages.filter(message => message.includes('未找到固定词配置'))).toEqual([
+    '[RewardsHelper] 搜索推广卡 "规划你的未来" 未找到固定词配置，将按页面语义兜底: 个人贷款 | 学生贷款',
+  ]);
+});
+
+test('uses English segmentation for an unconfigured English search promotion', async ({ page }) => {
+  const consoleMessages: string[] = [];
+  page.on('console', message => consoleMessages.push(message.text()));
+
+  await loadUserscriptFixture(page, undefined, {
+    worker: true,
+    modernLayout: true,
+    unconfiguredEnglishPromotion: true,
+  });
+
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)', { timeout: 6_000 });
+  const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
+  const task = queue.find((item: { title: string }) => item.title === 'Plan your future');
+
+  expect(task).toMatchObject({
+    kind: 'search-promotion',
+    searchTerms: ['personal loan', 'student loan'],
+  });
+  await expect.poll(() => consoleMessages.filter(message => message.includes('未找到固定词配置'))).toEqual([
+    '[RewardsHelper] 搜索推广卡 "Plan your future" 未找到固定词配置，将按页面语义兜底: personal loan | student loan',
+  ]);
+});
+
 test.describe('Rewards DOM value integration matrix', () => {
   const scenarios = [
     {
@@ -594,6 +642,47 @@ test('does not fall back to random terms after a promotion exhausts its fixed te
 
   const term = await page.evaluate(() => (window as any).__e2e_getSearchTerm());
   expect(term).toBe('');
+});
+
+test('finishes immediately and renders skipped state when the last queued card reaches its attempt limit', async ({ page }) => {
+  await loadUserscriptFixture(page, {
+    isSearching: false,
+    currentProgress: {
+      current: 200,
+      total: 200,
+      lastChecked: 200,
+      completed: true,
+      noProgressCount: 0,
+    },
+    usedSearchTerms: [],
+    dailyTasksQueue: [{
+      url: '/search?q=https%3A%2F%2Fwww.bing.com%2Frewards',
+      title: '查找住宿地点',
+      status: '未完成',
+      points: 10,
+      kind: 'search-promotion',
+      searchTerms: ['住宿地点', '适合周末旅行的住宿地点'],
+      attempts: 3,
+    }],
+    attemptedTasks: [],
+  }, {
+    worker: true,
+    pointsComplete: true,
+    modernLayout: true,
+    completedCard: true,
+  });
+
+  await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
+  await page.evaluate(() => (window as any).startRewardsTask());
+
+  await expect.poll(
+    () => page.evaluate(() => (window as any).__e2e_isLocalSearchRunning()),
+    { timeout: 3_000 }
+  ).toBe(false);
+  await expect(page.locator('#rh-start-btn')).toContainText('Start Farming');
+  await expect(page.locator('#rh-status-text')).toContainText('Search tasks completed');
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(1/2, skipped 1)');
+  await expect(page.locator('.rh-task-item').filter({ hasText: '查找住宿地点' })).toContainText('⏭️');
 });
 
 test('executes a search promotion with its first fixed term when the card query is a URL', async ({ page }) => {

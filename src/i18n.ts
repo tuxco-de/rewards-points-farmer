@@ -76,6 +76,7 @@ export const messages = {
             runningInWorker: "任务正在专用标签页中执行",
             pointsFirst: "优先完成搜索积分任务...",
             waitingPanelRetry: "等待重新读取 Rewards 面板...",
+            skippedTaskContinuing: "已跳过无效任务，继续处理下一项...",
             safetyStopped: (count: number) => `已达到 ${count} 次搜索安全上限，任务已停止`,
             panelFailuresStopped: (count: number) => `连续 ${count} 次无法读取 Rewards 面板，任务已停止`,
             repeatedNoProgressStopped: (count: number) => `连续完成 ${count} 轮休息后仍无进度，任务已停止`,
@@ -84,6 +85,8 @@ export const messages = {
         parser: {
             completed: "已完成",
             incomplete: "未完成",
+            skipped: "已跳过",
+            taskCountWithSkipped: (completed: number, total: number, skipped: number) => `(${completed}/${total}，跳过 ${skipped})`,
             taskName: (idx: number) => `任务${idx}`,
             noTasks: "✅ 未发现每日卡片任务",
             allTasksDone: "✅ 每日卡片任务已全部完成！"
@@ -151,6 +154,7 @@ export const messages = {
             runningInWorker: "Task is running in the dedicated tab",
             pointsFirst: "Completing search points first...",
             waitingPanelRetry: "Waiting to retry the Rewards panel...",
+            skippedTaskContinuing: "Skipped an invalid task, continuing with the next item...",
             safetyStopped: (count: number) => `Stopped after reaching the ${count}-search safety limit`,
             panelFailuresStopped: (count: number) => `Stopped after ${count} consecutive Rewards panel failures`,
             repeatedNoProgressStopped: (count: number) => `Stopped after ${count} rest cycles without progress`,
@@ -159,6 +163,8 @@ export const messages = {
         parser: {
             completed: "Completed",
             incomplete: "Incomplete",
+            skipped: "Skipped",
+            taskCountWithSkipped: (completed: number, total: number, skipped: number) => `(${completed}/${total}, skipped ${skipped})`,
             taskName: (idx: number) => `Task ${idx}`,
             noTasks: "✅ No daily card tasks found",
             allTasksDone: "✅ Daily card tasks all completed!"

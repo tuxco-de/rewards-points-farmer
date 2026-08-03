@@ -1,5 +1,5 @@
 import { getExecutionPhase } from '../../src/search';
-import { store } from '../../src/state';
+import { markDailyTaskSkipped, store, type DailyTask } from '../../src/state';
 
 describe('task execution state machine', () => {
     beforeEach(() => {
@@ -25,5 +25,25 @@ describe('task execution state machine', () => {
         store.searchState.dailyTasksQueue = [];
 
         expect(getExecutionPhase()).toBe('complete');
+    });
+
+    test('marks a skipped queue item as skipped in the persisted UI data', () => {
+        const task: DailyTask = {
+            url: '/search?q=ocean-life-films',
+            title: 'Ocean life films',
+            status: '未完成',
+            points: 10,
+            kind: 'search-promotion',
+            searchTerms: ['Ocean life films'],
+            attempts: 2,
+        };
+        store.searchState.dailyTasksQueue = [task];
+        store.dailyTasksData = [{ name: task.title, status: '未完成' }];
+
+        markDailyTaskSkipped(task);
+
+        expect(store.searchState.dailyTasksQueue).toEqual([]);
+        expect(store.searchState.attemptedTasks).toContain(task.url);
+        expect(store.dailyTasksData).toEqual([{ name: task.title, status: '已跳过' }]);
     });
 });

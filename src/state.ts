@@ -35,7 +35,7 @@ function normalizeCandidate(candidate: string): string {
     return candidate
         .replace(/\s+/g, ' ')
         .replace(/\b(?:not completed|completed|points?|pts)\b/gi, ' ')
-        .replace(/未完成|已完成|积分|添加/g, ' ')
+        .replace(/未完成|已完成|已跳过|积分|添加/g, ' ')
         .replace(/\+\s*\d+/g, ' ')
         .trim();
 }
@@ -157,6 +157,14 @@ export function markDailyTaskSkipped(taskInput: DailyTask) {
     if (key && !store.searchState.attemptedTasks.includes(key)) {
         store.searchState.attemptedTasks.push(key);
     }
+    const fullTitle = taskInput.title;
+    const shortenedTitle = fullTitle.length > 25 ? fullTitle.substring(0, 25) + '...' : fullTitle;
+    store.dailyTasksData = store.dailyTasksData.map(task => {
+        const displayName = String(task?.name || task?.title || '');
+        return displayName === fullTitle || displayName === shortenedTitle
+            ? { ...task, status: '已跳过' }
+            : task;
+    });
     removeDailyTask(taskInput);
 }
 

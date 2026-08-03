@@ -339,7 +339,90 @@ function cleanupSearchPromotionTerm(value: string): string {
     return cleanupTaskText(value)
         .replace(/^(?:search(?:\s+bing)?\s+for|look\s+up|find)\s+/i, '')
         .replace(/^(?:在\s*bing\s*上\s*)?(?:搜索|查找|寻找)\s*/i, '')
+        .replace(/^以(?=(?:比较|查找|寻找|了解|购买|规划|发现))/, '')
         .trim();
+}
+
+type WordSegment = { segment: string; isWordLike?: boolean };
+type WordSegmenter = { segment(value: string): Iterable<WordSegment> };
+type TextLocale = 'zh-CN' | 'en-US';
+
+const wordSegmenters = new Map<TextLocale, WordSegmenter | null>();
+
+const CHINESE_KEYWORD_STOP_WORDS = new Set([
+    '比较', '搜索', '查找', '寻找', '了解', '选择', '查看', '发现', '浏览',
+    '选项', '信息', '内容', '相关', '在', '上', '以', '的', '您', '你'
+]);
+const CHINESE_COORDINATORS = new Set(['和', '与', '及', '或']);
+const ENGLISH_KEYWORD_STOP_WORDS = new Set([
+    'compare', 'search', 'find', 'look', 'understand', 'choose', 'view', 'discover', 'browse',
+    'option', 'options', 'information', 'content', 'related', 'for', 'the', 'a', 'an', 'to', 'on', 'bing'
+]);
+const ENGLISH_COORDINATORS = new Set(['and', 'or']);
+
+function detectTextLocale(value: string): TextLocale | null {
+    const chineseCount = value.match(/[\u3400-\u9fff]/g)?.length || 0;
+    const englishCount = value.match(/[a-z]/gi)?.length || 0;
+    if (chineseCount === 0 && englishCount === 0) return null;
+    return chineseCount >= englishCount ? 'zh-CN' : 'en-US';
+}
+
+function segmentWords(value: string, locale: TextLocale): string[] {
+    if (typeof Intl === 'undefined') return [];
+
+    if (!wordSegmenters.has(locale)) {
+        const Segmenter = (Intl as typeof Intl & {
+            Segmenter?: new (locale: string, options: { granularity: 'word' }) => WordSegmenter;
+        }).Segmenter;
+        wordSegmenters.set(locale, Segmenter
+            ? new Segmenter(locale, { granularity: 'word' })
+            : null
+        );
+    }
+
+    const segmenter = wordSegmenters.get(locale);
+    if (!segmenter) return [];
+    return Array.from(segmenter.segment(value))
+        .filter(item => item.isWordLike !== false)
+        .map(item => item.segment.trim())
+        .filter(Boolean);
+}
+
+function extractSegmentedKeywords(value: string): string[] {
+    const locale = detectTextLocale(value);
+    if (!locale) return [];
+    const words = segmentWords(value, locale);
+    if (words.length === 0) return [];
+
+    const stopWords = locale === 'zh-CN' ? CHINESE_KEYWORD_STOP_WORDS : ENGLISH_KEYWORD_STOP_WORDS;
+    const coordinators = locale === 'zh-CN' ? CHINESE_COORDINATORS : ENGLISH_COORDINATORS;
+    const normalizeWord = (word: string) => locale === 'zh-CN' ? word : word.toLowerCase();
+    const joinWords = (parts: string[]) => parts.join(locale === 'zh-CN' ? '' : ' ');
+    const isKeyword = (word: string) => {
+        const normalized = normalizeWord(word);
+        return !stopWords.has(normalized) && !coordinators.has(normalized);
+    };
+    const coordinatorIndex = words.findIndex(word => coordinators.has(normalizeWord(word)));
+    if (coordinatorIndex > 0) {
+        let headIndex = -1;
+        for (let index = words.length - 1; index > coordinatorIndex; index--) {
+            if (isKeyword(words[index])) {
+                headIndex = index;
+                break;
+            }
+        }
+        if (headIndex > coordinatorIndex) {
+            const head = words[headIndex];
+            const left = words.slice(0, coordinatorIndex).filter(isKeyword);
+            const right = words.slice(coordinatorIndex + 1, headIndex).filter(isKeyword);
+            if (left.length > 0 && right.length > 0 && head) {
+                return [joinWords([...left, head]), joinWords([...right, head])];
+            }
+        }
+    }
+
+    const keywordPhrase = joinWords(words.filter(isKeyword));
+    return keywordPhrase ? [keywordPhrase] : [];
 }
 
 function getConfiguredSearchPromotionTerms(values: string[]): string[] {
@@ -371,11 +454,25 @@ function getConfiguredSearchPromotionTerms(values: string[]): string[] {
     return result;
 }
 
-function getFixedSearchTerms(values: string[]): string[] {
-    const configuredTerms = getConfiguredSearchPromotionTerms(values);
-    if (configuredTerms.length > 0) return configuredTerms;
-    return getUniqueTaskCandidates(values.map(cleanupSearchPromotionTerm));
+function getFallbackSearchPromotionTerms(values: string[]): string[] {
+    for (const value of values) {
+        const cleaned = cleanupSearchPromotionTerm(value);
+        const safeValue = getUniqueTaskCandidates([cleaned]);
+        if (safeValue.length === 0) continue;
+
+        const segmentedTerms = getUniqueTaskCandidates(extractSegmentedKeywords(cleaned));
+        return (segmentedTerms.length > 0 ? segmentedTerms : safeValue).slice(0, 3);
+    }
+    return [];
 }
+
+function getFixedSearchTerms(values: string[], fallbackValues: string[]): { terms: string[]; configured: boolean } {
+    const configuredTerms = getConfiguredSearchPromotionTerms(values);
+    if (configuredTerms.length > 0) return { terms: configuredTerms, configured: true };
+    return { terms: getFallbackSearchPromotionTerms(fallbackValues), configured: false };
+}
+
+const warnedUnconfiguredSearchPromotions = new Set<string>();
 
 function getCardDisplayName(card: Element, idx: number): string {
     const ariaLabel = card.getAttribute('aria-label') || '';
@@ -435,9 +532,26 @@ function createDailyTaskFromCard(card: Element, idx: number, status: string): Da
     const kind = hasSearchPromotionIntent(searchInputs, hrefQuery)
         ? 'search-promotion'
         : 'navigation';
-    const searchTerms = kind === 'search-promotion'
-        ? getFixedSearchTerms(searchInputs)
-        : [];
+    let searchTerms: string[] = [];
+    if (kind === 'search-promotion') {
+        const fallbackInputs = [
+            hrefQuery,
+            ...descriptions,
+            ariaLabel,
+            ...imgAlt,
+            title,
+            ...textLines
+        ];
+        const resolvedTerms = getFixedSearchTerms(searchInputs, fallbackInputs);
+        searchTerms = resolvedTerms.terms;
+        if (!resolvedTerms.configured && !warnedUnconfiguredSearchPromotions.has(title)) {
+            warnedUnconfiguredSearchPromotions.add(title);
+            const fallbackSummary = searchTerms.length > 0
+                ? `将按页面语义兜底: ${searchTerms.join(' | ')}`
+                : '页面中也没有可用的安全搜索词，任务将跳过';
+            console.warn(`[RewardsHelper] 搜索推广卡 "${title}" 未找到固定词配置，${fallbackSummary}`);
+        }
+    }
 
     return {
         url: href,
@@ -462,6 +576,7 @@ function addIframeSearchTerms(items: any[]): number {
 }
 
 export function getDataFromPanel() {
+    store.searchState.panelParsed = false;
     let targetDoc = document;
     let isIframe = false;
     let iframeWin: any = window;
@@ -519,7 +634,11 @@ export function getDataFromPanel() {
                     }
                 }
                 
-                tasks.push({ name, status });
+                const displayStatus = task && status === '未完成' &&
+                    store.searchState.attemptedTasks.includes(getDailyTaskKey(task))
+                    ? '已跳过'
+                    : status;
+                tasks.push({ name, status: displayStatus });
             });
 
             if (finalCards.length > 0) {
