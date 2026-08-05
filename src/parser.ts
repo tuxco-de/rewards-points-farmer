@@ -375,8 +375,7 @@ function getUniqueTaskCandidates(candidates: string[]): string[] {
     return result;
 }
 
-function hasSearchPromotionIntent(values: string[], hrefQuery: string): boolean {
-    if (hrefQuery && !isUrlLikeSearchCandidate(hrefQuery)) return true;
+function hasSearchPromotionIntent(values: string[]): boolean {
     const text = values.join(' ');
     return /(?:搜索|查找|寻找)|\b(?:search(?:\s+bing)?\s+for|look\s+up)\b|\bfind\s+(?:a|an|the)?\s*(?:place|places|hotel|hotels|restaurant|restaurants|flight|flights|recipe|recipes|movie|movies|job|jobs|product|products)\b/i.test(text);
 }
@@ -575,7 +574,11 @@ function createDailyTaskFromCard(card: Element, idx: number, status: string): Da
         ...descriptions,
         ...textLines
     ];
-    const kind = hasSearchPromotionIntent(searchInputs, hrefQuery)
+    // A query embedded in a click-through URL is the destination of many
+    // ordinary activities (for example DNA, diving and flight cards). Only
+    // explicit card copy or the Rewards search-promotion marker can classify
+    // a task as a search promotion.
+    const kind = card.matches('#exclusive_promo_cont') || hasSearchPromotionIntent(searchInputs)
         ? 'search-promotion'
         : 'navigation';
     let searchTerms: string[] = [];

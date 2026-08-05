@@ -380,13 +380,16 @@ test('parses the redesigned Rewards entry, progress and promo cards', async ({ p
 });
 
 test('keeps all current Rewards cards when browse activities share one URL', async ({ page }) => {
+  const consoleMessages: string[] = [];
+  page.on('console', message => consoleMessages.push(message.text()));
+
   await loadUserscriptFixture(page, undefined, {
     worker: true,
     modernLayout: true,
     currentRewardsCards: true,
   });
 
-  await expect(page.locator('#rh-tasks-count')).toHaveText('(0/8)', { timeout: 6_000 });
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(0/11)', { timeout: 6_000 });
   const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
   const titles = queue.map((task: { title: string }) => task.title);
   expect(titles).toEqual([
@@ -398,6 +401,9 @@ test('keeps all current Rewards cards when browse activities share one URL', asy
     '学习歌曲歌词',
     '驾驭您的旅程',
     '使用 Bing 预订航班',
+    '加速测验',
+    '熟练潜水',
+    'DNA解码',
   ]);
   expect(titles).not.toContain('将推荐转化为奖励');
 
@@ -409,11 +415,19 @@ test('keeps all current Rewards cards when browse activities share one URL', asy
     ['热门歌曲歌词', '经典歌曲歌词', '最喜欢的歌曲歌词'],
     ['旅行租车', '机场租车优惠', '便宜租车'],
   ]);
-  expect(queue.find((task: { title: string }) => task.title === '使用 Bing 预订航班')?.searchTerms).toEqual([
-    '廉价机票',
-    '最低票价航班',
-    '航班预订',
+  const clickCardTitles = ['使用 Bing 预订航班', '加速测验', '熟练潜水', 'DNA解码'];
+  const clickCards = queue.filter((task: { title: string }) => clickCardTitles.includes(task.title));
+  expect(clickCards).toHaveLength(4);
+  expect(clickCards.map((task: { kind: string }) => task.kind)).toEqual([
+    'navigation',
+    'navigation',
+    'navigation',
+    'navigation',
   ]);
+  expect(clickCards.map((task: { searchTerms: string[] }) => task.searchTerms)).toEqual([[], [], [], []]);
+  expect(consoleMessages.filter(message =>
+    message.includes('未找到固定词配置') && clickCardTitles.some(title => message.includes(title))
+  )).toEqual([]);
 });
 
 test('warns and uses description-first fallback terms for an unconfigured search promotion', async ({ page }) => {
