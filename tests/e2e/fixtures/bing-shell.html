@@ -67,6 +67,7 @@
       const reactiveAutocomplete = params.get('reactiveAutocomplete') === '1';
       const unconfiguredPromotion = params.get('unconfiguredPromotion') === '1';
       const unconfiguredEnglishPromotion = params.get('unconfiguredEnglishPromotion') === '1';
+      const currentRewardsCards = params.get('currentRewardsCards') === '1';
       const firstPromotionTitle = unconfiguredEnglishPromotion
         ? 'Plan your future'
         : (unconfiguredPromotion ? '规划你的未来' : '查找住宿地点');
@@ -125,6 +126,42 @@
              <span>每日搜索</span>
              <span>${searchProgress}</span>
            </div>`;
+      const currentRewardsCardsMarkup = currentRewardsCards
+        ? `<div class="promo_cont">
+             <a class="block" href="https://www.bing.com/rewards/checkuser?task=daily-poll">
+               <p class="promo-title">每日投票</p>
+               <div class="shortPoint point">10</div>
+               <div class="promo-desc">选择您的偏好，看看您与他人相比如何</div>
+             </a>
+           </div>
+           <div class="promo_cont">
+             <a class="block" href="https://rewards.bing.com/refer?form=ML2XHD">
+               <p class="promo-title">将推荐转化为奖励</p>
+               <div class="shortPoint point">10</div>
+               <div class="promo-desc">当你的朋友在必应上搜索时，你可以赚取更多积分。</div>
+             </a>
+           </div>
+           ${[
+             ['更智能的银行服务\u200B', '在 Bing 上搜索以比较支票账户和储蓄账户选项'],
+             ['观看演出\u200B', '在 Bing 上搜索，查找您附近音乐会的门票'],
+             ['学习歌曲歌词\u200B', '在 Bing 上搜索您最喜欢的歌曲的歌词'],
+             ['驾驭您的旅程\u200B', '在 Bing 上搜索租车，为您的下一次冒险做好准备'],
+           ].map(([title, description]) => `
+             <div id="exclusive_promo_cont" class="promo_cont">
+               <a class="block" href="https://www.bing.com/?form=ML2PCR&amp;OCID=ML2PCR&amp;rwAutoFlyout=exb">
+                 <p class="b_subtitle promo-title">${title}</p>
+                 <div class="shortPoint point">10</div>
+                 <div class="fp_row b_footnote promo-desc">${description}</div>
+               </a>
+             </div>`).join('')}
+           <div class="promo_cont">
+             <a class="block" href="https://www.bing.com/search?q=%E5%BB%89%E4%BB%B7%E6%9C%BA%E7%A5%A8&amp;form=TGREW6">
+               <p class="promo-title">使用 Bing 预订航班</p>
+               <div class="shortPoint point">5</div>
+               <div class="promo-desc">发现您下次出行的最低票价</div>
+             </a>
+           </div>`
+        : '';
       const modernFlyoutMarkup = `
         <!doctype html>
         <html>
@@ -148,6 +185,7 @@
                     </a>
                   </div>
                 </div>
+                ${currentRewardsCardsMarkup}
                 <div class="ss_items_wrapper">
                   <a class="ss_item" href="/search?q=summer+travel">summer travel</a>
                   <a class="ss_item" href="/search?q=technology+news">technology news</a>

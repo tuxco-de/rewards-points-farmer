@@ -1,4 +1,4 @@
-import { getCardCompletionStatus, isRewardsTaskCard, parseEarnedProgressText } from '../../src/parser';
+import { clickTaskCardAsync, getCardCompletionStatus, isRewardsTaskCard, parseEarnedProgressText } from '../../src/parser';
 
 describe('Rewards parser', () => {
     test('prefers an explicit completed card label over a generic point label', () => {
@@ -71,6 +71,87 @@ describe('Rewards parser', () => {
             </a>`;
 
         expect(isRewardsTaskCard(card)).toBe(true);
+    });
+
+    test('accepts a point-bearing Bing activity rendered as an ordinary promo card', () => {
+        const card = document.createElement('div');
+        card.className = 'promo_cont';
+        card.innerHTML = `
+            <a href="https://www.bing.com/search?q=%E5%BB%89%E4%BB%B7%E6%9C%BA%E7%A5%A8">
+                <span class="promo-title">使用 Bing 预订航班</span>
+                <span class="point">5</span>
+            </a>`;
+
+        expect(isRewardsTaskCard(card)).toBe(true);
+    });
+
+    test('does not mistake a checkuser URL for a completion marker', () => {
+        const card = document.createElement('div');
+        card.className = 'promo_cont';
+        card.innerHTML = `
+            <a href="https://www.bing.com/rewards/checkuser?task=daily-poll">
+                <span class="promo-title">每日投票</span>
+                <span class="point">10</span>
+            </a>`;
+
+        expect(getCardCompletionStatus(card)).toBe('未完成');
+    });
+
+    test.each([
+        [0, 10, '未完成'],
+        [30, 30, '已完成'],
+    ])('uses embedded Rewards progress %i/%i to determine completion', (current, total, expected) => {
+        const card = document.createElement('div');
+        card.className = 'promo_cont slim';
+        const nestedTarget = encodeURIComponent(`/search?q=quiz&filters=BTROEC%3A%22${current}%22+BTROMC%3A%22${total}%22`);
+        card.innerHTML = `
+            <a href="https://www.bing.com/rewards/checkuser?ru=${nestedTarget}">
+                <span class="promo-title">极速问答</span>
+                <span class="point">${total}</span>
+            </a>`;
+
+        expect(getCardCompletionStatus(card)).toBe(expected);
+    });
+
+    test('still rejects a point-bearing referral promotion', () => {
+        const card = document.createElement('div');
+        card.className = 'promo_cont';
+        card.innerHTML = `
+            <a href="https://rewards.bing.com/refer">
+                <span class="promo-title">将推荐转化为奖励</span>
+                <span class="point">10</span>
+            </a>`;
+
+        expect(isRewardsTaskCard(card)).toBe(false);
+    });
+
+    test('clicks the matching title when several cards share one URL', async () => {
+        document.body.innerHTML = '<iframe id="b_rwFlyout"></iframe>';
+        const iframe = document.querySelector('iframe')!;
+        const iframeDoc = iframe.contentDocument!;
+        iframeDoc.body.innerHTML = `
+            <div class="promo_cont"><a href="https://www.bing.com/?form=ML2PCR"><span class="promo-title">更智能的银行服务</span><span class="point">10</span></a></div>
+            <div class="promo_cont"><a href="https://www.bing.com/?form=ML2PCR"><span class="promo-title">观看演出</span><span class="point">10</span></a></div>`;
+        let clickedTitle = '';
+        iframeDoc.addEventListener('click', event => {
+            const link = (event.target as Element).closest('a');
+            clickedTitle = link?.querySelector('.promo-title')?.textContent || '';
+            event.preventDefault();
+        });
+
+        const clicked = await clickTaskCardAsync({
+            url: 'https://www.bing.com/?form=ML2PCR',
+            title: '观看演出',
+            status: '未完成',
+            points: 10,
+            kind: 'search-promotion',
+            searchTerms: ['附近音乐会门票'],
+            attempts: 0,
+            source: 'card'
+        });
+
+        expect(clicked).toBe(true);
+        expect(clickedTitle).toBe('观看演出');
     });
 
     test('rejects a card without an actionable link', () => {

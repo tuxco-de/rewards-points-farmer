@@ -33,6 +33,7 @@ function extractQueryFromUrl(url: string): string {
 
 function normalizeCandidate(candidate: string): string {
     return candidate
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
         .replace(/\s+/g, ' ')
         .replace(/\b(?:not completed|completed|points?|pts)\b/gi, ' ')
         .replace(/未完成|已完成|已跳过|积分|添加/g, ' ')
@@ -92,11 +93,17 @@ function normalizeDailyTaskEntry(entry: unknown): DailyTask | null {
         ]),
         attempts: Math.max(0, Number(candidate.attempts || 0)),
         lastAttemptAt: Number(candidate.lastAttemptAt || 0) || undefined,
-        source: candidate.source === 'card' ? 'card' : undefined
+        // dailyTasksQueue has always represented Rewards card work. Older
+        // persisted states predate the source field, so migrate them to the
+        // title-aware card key instead of keeping a duplicate URL-only entry.
+        source: 'card'
     };
 }
 
 export function getDailyTaskKey(task: DailyTask): string {
+    if (task.source === 'card' && task.title) {
+        return `card:${normalizeCandidate(task.title).toLowerCase()}|${task.url}`;
+    }
     return task.url || task.title;
 }
 

@@ -33,7 +33,7 @@ type SavedState = {
 async function loadUserscriptFixture(
   page: Page,
   savedState?: SavedState,
-  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean; unconfiguredPromotion?: boolean; unconfiguredEnglishPromotion?: boolean } = {}
+  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean; unconfiguredPromotion?: boolean; unconfiguredEnglishPromotion?: boolean; currentRewardsCards?: boolean } = {}
 ) {
   if (savedState) {
     await page.context().addInitScript(state => {
@@ -82,6 +82,7 @@ async function loadUserscriptFixture(
   if (options.reactiveAutocomplete) url.searchParams.set('reactiveAutocomplete', '1');
   if (options.unconfiguredPromotion) url.searchParams.set('unconfiguredPromotion', '1');
   if (options.unconfiguredEnglishPromotion) url.searchParams.set('unconfiguredEnglishPromotion', '1');
+  if (options.currentRewardsCards) url.searchParams.set('currentRewardsCards', '1');
   await page.goto(url.toString());
   await page.waitForFunction(() => typeof (window as any).startRewardsTask === 'function');
 }
@@ -376,6 +377,43 @@ test('parses the redesigned Rewards entry, progress and promo cards', async ({ p
   );
   expect(await page.evaluate(() => document.body.dataset.rewardsToggleCount)).toBe('1');
   expect(await page.evaluate(() => document.body.dataset.javascriptNavigation)).toBeUndefined();
+});
+
+test('keeps all current Rewards cards when browse activities share one URL', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, {
+    worker: true,
+    modernLayout: true,
+    currentRewardsCards: true,
+  });
+
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(0/8)', { timeout: 6_000 });
+  const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
+  const titles = queue.map((task: { title: string }) => task.title);
+  expect(titles).toEqual([
+    '查找住宿地点',
+    'NASA Artemis mission',
+    '每日投票',
+    '更智能的银行服务',
+    '观看演出',
+    '学习歌曲歌词',
+    '驾驭您的旅程',
+    '使用 Bing 预订航班',
+  ]);
+  expect(titles).not.toContain('将推荐转化为奖励');
+
+  const sharedUrlTasks = queue.filter((task: { url: string }) => task.url.includes('form=ML2PCR'));
+  expect(sharedUrlTasks).toHaveLength(4);
+  expect(sharedUrlTasks.map((task: { searchTerms: string[] }) => task.searchTerms)).toEqual([
+    ['支票账户', '储蓄账户', '高收益储蓄账户'],
+    ['附近音乐会门票', '现场演出门票', '近期音乐会'],
+    ['热门歌曲歌词', '经典歌曲歌词', '最喜欢的歌曲歌词'],
+    ['旅行租车', '机场租车优惠', '便宜租车'],
+  ]);
+  expect(queue.find((task: { title: string }) => task.title === '使用 Bing 预订航班')?.searchTerms).toEqual([
+    '廉价机票',
+    '最低票价航班',
+    '航班预订',
+  ]);
 });
 
 test('warns and uses description-first fallback terms for an unconfigured search promotion', async ({ page }) => {

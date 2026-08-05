@@ -58,6 +58,16 @@
     "vacation flight deals",
     "round trip flights"
   ],
+  "使用 Bing 预订航班": [
+    "廉价机票",
+    "最低票价航班",
+    "航班预订"
+  ],
+  "即将起飞": [
+    "实惠航班",
+    "特价机票",
+    "旅行航班预订"
+  ],
   "保护重要的事物": [
     "最佳保险计划",
     "保险方案比较",
@@ -73,35 +83,70 @@
     "best savings accounts",
     "high yield savings accounts"
   ],
+  "更智能的银行服务": [
+    "支票账户",
+    "储蓄账户",
+    "高收益储蓄账户"
+  ],
   "Catch the show": [
     "concert tickets near me",
     "live music tickets",
     "upcoming concerts near me"
+  ],
+  "观看演出": [
+    "附近音乐会门票",
+    "现场演出门票",
+    "近期音乐会"
   ],
   "Learn song lyrics": [
     "popular song lyrics",
     "Bohemian Rhapsody lyrics",
     "Hey Jude lyrics"
   ],
+  "学习歌曲歌词": [
+    "热门歌曲歌词",
+    "经典歌曲歌词",
+    "最喜欢的歌曲歌词"
+  ],
   "Drive your way": [
     "rental cars for my next trip",
     "airport car rental deals",
     "cheap rental cars"
+  ],
+  "驾驭您的旅程": [
+    "旅行租车",
+    "机场租车优惠",
+    "便宜租车"
   ],
   "Park with ease": [
     "airport parking near me",
     "cheap airport parking",
     "reserve airport parking"
   ],
+  "轻松停车": [
+    "机场停车位",
+    "机场停车优惠",
+    "预订机场停车位"
+  ],
   "Send a smile": [
     "same day flower delivery",
     "fresh flower delivery near me",
     "online flower delivery options"
   ],
+  "送上微笑": [
+    "鲜花配送",
+    "当日鲜花配送",
+    "附近鲜花配送"
+  ],
   "Stream your favorites": [
     "best streaming services",
     "streaming platform bundles",
     "compare streaming subscriptions"
+  ],
+  "播放您喜爱的内容": [
+    "最佳流媒体平台",
+    "流媒体套餐",
+    "流媒体订阅比较"
   ],
   "Expand your vocabulary": [
     "meaning of serendipity",

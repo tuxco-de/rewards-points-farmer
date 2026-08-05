@@ -166,19 +166,12 @@ export function isRewardsTaskCard(card: Element): boolean {
         '#exclusive_promo_cont, [data-task-id], .promo_cont.slim, .rw-card, .explore-card, .task-card'
     );
 
-    // The Rewards flyout reuses .promo_cont for summaries, redemption links,
-    // referrals, Cashback and shopping promotions. Real activity cards have a
-    // checklist ancestor or one of the task-specific markers above.
-    if (card.matches('.promo_cont') && !hasTrustedTaskShape) {
-        console.log(`[RewardsHelper] 剔除卡片 (普通推广卡): aria="${ariaLabel}"`);
-        return false;
-    }
-
     const normalizedHref = href.toLowerCase();
     const isRelativeBingPath = normalizedHref.startsWith('/') && !normalizedHref.startsWith('//');
+    let parsedUrl: URL | null = null;
     if (!isRelativeBingPath) {
         try {
-            const parsedUrl = new URL(normalizedHref, window.location.href);
+            parsedUrl = new URL(normalizedHref, window.location.href);
             if ((parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') || !isBingHost(parsedUrl.hostname)) {
                 console.log(`[RewardsHelper] 剔除卡片 (非 Bing 链接): aria="${ariaLabel}", href="${normalizedHref.substring(0, 40)}"`);
                 return false;
@@ -189,6 +182,18 @@ export function isRewardsTaskCard(card: Element): boolean {
     }
 
     const points = getCardPoints(card);
+    const isPointBackedBingActivity = points > 0 && (
+        isRelativeBingPath || parsedUrl?.hostname.toLowerCase() !== 'rewards.bing.com'
+    );
+
+    // The live flyout now renders real daily activities as ordinary
+    // `.promo_cont` elements. Keep point-bearing Bing activities, while still
+    // excluding Rewards referral/redeem promos and point-free summaries.
+    if (card.matches('.promo_cont') && !hasTrustedTaskShape && !isPointBackedBingActivity) {
+        console.log(`[RewardsHelper] 剔除卡片 (普通推广卡): aria="${ariaLabel}"`);
+        return false;
+    }
+
     if (points <= 0 && !hasTrustedTaskShape) {
         console.log(`[RewardsHelper] 剔除卡片 (无积分且缺少任务标识): aria="${ariaLabel}"`);
         return false;
@@ -236,9 +241,32 @@ function getCardPoints(card: Element): number {
     return points;
 }
 
+function getEmbeddedCardProgress(card: Element): { current: number; total: number } | null {
+    const link = card.tagName.toLowerCase() === 'a' ? card : card.querySelector('a');
+    let decodedHref = link?.getAttribute('href') || '';
+    for (let index = 0; index < 3; index++) {
+        try {
+            const next = decodeURIComponent(decodedHref);
+            if (next === decodedHref) break;
+            decodedHref = next;
+        } catch {
+            break;
+        }
+    }
+
+    const currentMatch = decodedHref.match(/BTROEC\s*[:=]\s*["']?(\d+)/i);
+    const totalMatch = decodedHref.match(/BTROMC\s*[:=]\s*["']?(\d+)/i);
+    if (!currentMatch || !totalMatch) return null;
+
+    const current = Number.parseInt(currentMatch[1], 10);
+    const total = Number.parseInt(totalMatch[1], 10);
+    return Number.isFinite(current) && Number.isFinite(total) && total > 0
+        ? { current, total }
+        : null;
+}
+
 export function getCardCompletionStatus(card: Element): string {
     const ariaLabel = card.getAttribute('aria-label') || '';
-    const html = card.innerHTML || '';
     const text = card.textContent || '';
 
     let pAriaLower = '';
@@ -253,14 +281,31 @@ export function getCardCompletionStatus(card: Element): string {
         return '未完成';
     } else if (ariaLower.includes('is completed') || ariaLower.includes('completed') || ariaLower.includes('已完成')) {
         return '已完成';
-    } else if (pAriaLower.includes('添加') || pAriaLower.includes('added')) {
+    }
+
+    const embeddedProgress = getEmbeddedCardProgress(card);
+    if (embeddedProgress) {
+        return embeddedProgress.current >= embeddedProgress.total ? '已完成' : '未完成';
+    }
+
+    if (pAriaLower.includes('添加') || pAriaLower.includes('added')) {
         return '已完成';
     } else if (pAriaLower.includes('积分') || pAriaLower.includes('points')) {
         return '未完成';
     } else {
-        const hasCheck = /check|completed|已完成/i.test(html) || /已完成/.test(text);
-        const hasAdd = /add|plus/i.test(html) || /未完成/.test(text) || /^\+\s*\d+/.test(text) || html.includes('+');
-        if (hasCheck && !hasAdd) {
+        const textLower = text.toLowerCase();
+        if (textLower.includes('not completed') || text.includes('未完成')) return '未完成';
+
+        const completionMarker = card.querySelector([
+            '[class*="checkmark" i]',
+            '[class*="completed" i]',
+            '[aria-label*="completed" i]',
+            '[aria-label*="已完成"]',
+            '[title*="completed" i]',
+            '[title*="已完成"]',
+            '[data-completed="true"]'
+        ].join(', '));
+        if (completionMarker || textLower.includes('completed') || text.includes('已完成')) {
             return '已完成';
         }
         return '未完成';
@@ -301,6 +346,7 @@ function getReactPromotionTitle(card: Element): string {
 
 function cleanupTaskText(value: string): string {
     return value
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
         .replace(/\s+/g, ' ')
         .replace(/\b(?:not completed|is completed|completed|points?|pts|icon)\b/gi, ' ')
         .replace(/未完成|已完成|积分|添加/g, ' ')
@@ -868,7 +914,13 @@ export async function clickTaskCardAsync(task: DailyTask): Promise<boolean> {
         const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
         if (!iframeDoc) return false;
 
-        const linkElem = Array.from(iframeDoc.querySelectorAll('a')).find(a => hrefMatchesTask(a.getAttribute('href'), url));
+        const matchingLinks = Array.from(iframeDoc.querySelectorAll('a'))
+            .filter(a => hrefMatchesTask(a.getAttribute('href'), url));
+        const normalizedTaskTitle = cleanupTaskText(task.title).toLowerCase();
+        const linkElem = matchingLinks.find(link => {
+            const card = link.closest('.promo_cont, .rw-card, .explore-card, .task-card, [data-task-id], [data-offer-id]') || link;
+            return cleanupTaskText(getCardDisplayName(card, 0)).toLowerCase() === normalizedTaskTitle;
+        }) || matchingLinks[0];
 
         if (linkElem) {
             const targetElem = linkElem as HTMLElement;
