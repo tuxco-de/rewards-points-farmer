@@ -33,7 +33,7 @@ type SavedState = {
 async function loadUserscriptFixture(
   page: Page,
   savedState?: SavedState,
-  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean; unconfiguredPromotion?: boolean; unconfiguredEnglishPromotion?: boolean; currentRewardsCards?: boolean } = {}
+  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; wrappedInputValue?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean; unconfiguredPromotion?: boolean; unconfiguredEnglishPromotion?: boolean; currentRewardsCards?: boolean; spaSearch?: boolean } = {}
 ) {
   if (savedState) {
     await page.context().addInitScript(state => {
@@ -70,6 +70,36 @@ async function loadUserscriptFixture(
     });
   }
 
+  if (options.wrappedInputValue) {
+    await page.context().addInitScript(() => {
+      const NativeInput = window.HTMLInputElement;
+      const valueDescriptor = Object.getOwnPropertyDescriptor(NativeInput.prototype, 'value');
+      Object.defineProperty(window, 'HTMLInputElement', {
+        configurable: true,
+        value: function HTMLInputElement() {},
+      });
+
+      const patchInputs = () => {
+        document.querySelectorAll('input[name="q"]').forEach(input => {
+          if ((input as HTMLElement).dataset.wrappedValue === '1') return;
+          (input as HTMLElement).dataset.wrappedValue = '1';
+          Object.defineProperty(input, 'value', {
+            configurable: true,
+            get() {
+              return valueDescriptor?.get ? Reflect.apply(valueDescriptor.get, this, []) : '';
+            },
+            set() {
+              throw new TypeError('Illegal invocation');
+            },
+          });
+        });
+      };
+
+      new MutationObserver(patchInputs).observe(document, { childList: true, subtree: true });
+      document.addEventListener('DOMContentLoaded', patchInputs, { once: true });
+    });
+  }
+
   await page.context().addInitScript({ path: userscriptPath });
   const url = new URL(fixtureUrl);
   if (options.worker) url.searchParams.set('rewards_helper_worker', '1');
@@ -83,6 +113,7 @@ async function loadUserscriptFixture(
   if (options.unconfiguredPromotion) url.searchParams.set('unconfiguredPromotion', '1');
   if (options.unconfiguredEnglishPromotion) url.searchParams.set('unconfiguredEnglishPromotion', '1');
   if (options.currentRewardsCards) url.searchParams.set('currentRewardsCards', '1');
+  if (options.spaSearch) url.searchParams.set('spaSearch', '1');
   await page.goto(url.toString());
   await page.waitForFunction(() => typeof (window as any).startRewardsTask === 'function');
 }
@@ -725,6 +756,7 @@ test('finishes immediately and renders skipped state when the last queued card r
   });
 
   await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
+  await expect(page.locator('#rh-badge-text')).toHaveText('📋 1/2');
   await page.evaluate(() => (window as any).startRewardsTask());
 
   await expect.poll(
@@ -732,9 +764,63 @@ test('finishes immediately and renders skipped state when the last queued card r
     { timeout: 3_000 }
   ).toBe(false);
   await expect(page.locator('#rh-start-btn')).toContainText('Start Farming');
-  await expect(page.locator('#rh-status-text')).toContainText('Search tasks completed');
+  await expect(page.locator('#rh-status-text')).toContainText('Rewards tasks completed');
+  await expect(page.locator('#rh-badge-text')).toHaveText('✅ Done');
   await expect(page.locator('#rh-tasks-count')).toHaveText('(1/2, skipped 1)');
   await expect(page.locator('.rh-task-item').filter({ hasText: '查找住宿地点' })).toContainText('⏭️');
+});
+
+test('continues with the next card after a completed-points card reaches its attempt limit', async ({ page }) => {
+  test.setTimeout(20_000);
+  await loadUserscriptFixture(page, {
+    isSearching: false,
+    currentProgress: {
+      current: 200,
+      total: 200,
+      lastChecked: 200,
+      completed: true,
+      noProgressCount: 2,
+    },
+    usedSearchTerms: [],
+    totalSearchAttempts: 3,
+    dailyTasksQueue: [
+      {
+        url: '/search?q=https%3A%2F%2Fwww.bing.com%2Frewards',
+        title: '查找住宿地点',
+        status: '未完成',
+        points: 10,
+        kind: 'search-promotion',
+        searchTerms: ['住宿地点', '适合周末旅行的住宿地点'],
+        attempts: 3,
+      },
+      {
+        url: '/rewards/task/nasa-artemis',
+        title: 'NASA Artemis mission',
+        status: '未完成',
+        points: 10,
+        kind: 'search-promotion',
+        searchTerms: ['NASA Artemis mission', 'Artemis II launch'],
+        attempts: 0,
+      },
+    ],
+    attemptedTasks: [],
+  }, {
+    worker: true,
+    pointsComplete: true,
+    modernLayout: true,
+  });
+
+  await expect(page.locator('#rh-badge-text')).toHaveText('📋 0/2', { timeout: 6_000 });
+  await page.evaluate(() => (window as any).startRewardsTask());
+
+  await expect
+    .poll(() => page.evaluate(() => document.body.dataset.lastCardClick), { timeout: 12_000 })
+    .toBe('/rewards/task/nasa-artemis');
+
+  const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
+  expect(queue[0]).toMatchObject({ title: 'NASA Artemis mission', attempts: 1 });
+  await expect(page.locator('#rh-badge-text')).not.toHaveText('✅ Done');
+  await page.evaluate(() => (window as any).stopRewardsTask());
 });
 
 test('executes a search promotion with its first fixed term when the card query is a URL', async ({ page }) => {
@@ -742,6 +828,7 @@ test('executes a search promotion with its first fixed term when the card query 
   await loadUserscriptFixture(page, undefined, { worker: true, pointsComplete: true, modernLayout: true, rejectMouseEventView: true });
 
   await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
+  await expect(page.locator('#rh-badge-text')).toHaveText('📋 0/2');
   await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');
   await expect(page.locator('#rewid-f')).toHaveCount(1);
 
@@ -764,6 +851,34 @@ test('executes a search promotion with its first fixed term when the card query 
   expect(savedState.dailyTasksQueue[0].searchTerms).toEqual(
     expect.not.arrayContaining([expect.stringMatching(/(?:https?:\/\/|bing\.com|^\/search)/i)])
   );
+});
+
+test('continues the task loop after a same-page SPA search update', async ({ page }) => {
+  test.setTimeout(35_000);
+  await page.context().addInitScript(() => {
+    localStorage.setItem('bing_rewards_config', JSON.stringify({
+      searchInterval: [1, 1],
+      scrollTime: 1,
+      restTime: 300,
+      maxNoProgressCount: 10,
+    }));
+  });
+  await loadUserscriptFixture(page, undefined, {
+    worker: true,
+    modernLayout: true,
+    spaSearch: true,
+  });
+
+  await page.evaluate(() => (window as any).startRewardsTask());
+
+  await expect.poll(
+    () => page.evaluate(() => Number(document.body.dataset.spaSubmitCount || 0)),
+    { timeout: 30_000 }
+  ).toBeGreaterThanOrEqual(2);
+  expect(await page.evaluate(() => Number(document.body.dataset.flyoutCloseCount || 0))).toBeGreaterThanOrEqual(2);
+  expect(await page.evaluate(() => (window as any).__e2e_isLocalSearchRunning())).toBe(true);
+
+  await page.evaluate(() => (window as any).stopRewardsTask());
 });
 
 test('restores saved in-progress UI state from localStorage', async ({ page }) => {
@@ -845,8 +960,8 @@ test('exposes an e2e hook that can submit through the Bing search form', async (
     .toBe('playwright check');
 });
 
-test('submits through the redesigned semantic Bing search form', async ({ page }) => {
-  await loadUserscriptFixture(page, undefined, { modernLayout: true, reactiveAutocomplete: true });
+test('submits through the redesigned semantic Bing search form with a wrapped input value setter', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, { modernLayout: true, reactiveAutocomplete: true, wrappedInputValue: true });
 
   await expect(page.locator('#sb_form_q')).toHaveCount(0);
   await expect(page.locator('#sb_form_go')).toHaveCount(0);

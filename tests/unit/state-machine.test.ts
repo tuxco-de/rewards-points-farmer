@@ -1,4 +1,4 @@
-import { getExecutionPhase } from '../../src/search';
+import { countdownAsync, getExecutionPhase } from '../../src/search';
 import { getDailyTaskKey, markDailyTaskSkipped, store, upsertDailyTask, type DailyTask } from '../../src/state';
 
 describe('task execution state machine', () => {
@@ -7,6 +7,7 @@ describe('task execution state machine', () => {
     });
 
     afterEach(() => {
+        jest.useRealTimers();
         store.resetRuntimeState();
     });
 
@@ -16,6 +17,27 @@ describe('task execution state machine', () => {
 
         store.searchState.panelParsed = true;
         expect(getExecutionPhase()).toBe('complete');
+    });
+
+    test('resolves the previous countdown when a new countdown replaces it', async () => {
+        jest.useFakeTimers();
+        store.isSearching = true;
+
+        const previousCountdown = countdownAsync(10, 'waiting');
+        let previousResolved = false;
+        void previousCountdown.then(() => {
+            previousResolved = true;
+        });
+
+        const replacementCountdown = countdownAsync(2, 'waiting');
+        await Promise.resolve();
+
+        expect(previousResolved).toBe(true);
+        expect(store.searchState.countdown).toBe(2);
+
+        jest.advanceTimersByTime(2_000);
+        await expect(replacementCountdown).resolves.toBeUndefined();
+        expect(store.countdownTimer).toBeNull();
     });
 
     test('does not remain in card phase for an already skipped UI card', () => {

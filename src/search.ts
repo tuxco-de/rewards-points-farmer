@@ -1,11 +1,24 @@
 import { config } from './config';
 import { DailyTask, getDailyTaskSearchTerm, markDailyTaskSkipped, MAX_DAILY_TASK_ATTEMPTS, MAX_PANEL_FAILURES, MAX_REST_CYCLES, MAX_TOTAL_SEARCH_ATTEMPTS, recordDailyTaskAttempt, store, sleep, getRandomInterval } from './state';
 import { updateStatus, updateCountdown, showCompletionNotification, setSearchButtonState, updateDailyTasksUI, updateProgressUI } from './ui';
-import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent, simulateTypingAndSearch, SEARCH_RESULT_SELECTOR } from './dom';
+import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, getRewardsFlyoutIframe, waitForIframeContent, simulateTypingAndSearch, SEARCH_RESULT_SELECTOR } from './dom';
 import { getDataFromPanel, getSearchTermsFromMainDoc, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
 import { t } from './i18n';
 import { isDedicatedWorkerContext } from './worker';
 import { buildBingSearchUrl, normalizeBingTaskUrl } from './navigation';
+
+let activeCountdownResolve: (() => void) | null = null;
+
+function cancelActiveCountdown() {
+    if (store.countdownTimer) {
+        clearInterval(store.countdownTimer);
+        store.countdownTimer = null;
+    }
+
+    const resolve = activeCountdownResolve;
+    activeCountdownResolve = null;
+    resolve?.();
+}
 
 export async function simulateScrollingAsync() {
     updateStatus(t('status', 'browsing'));
@@ -32,22 +45,36 @@ export async function simulateScrollingAsync() {
 }
 
 export function countdownAsync(seconds: number, action: string): Promise<void> {
-    return new Promise(resolve => {
-        if (store.countdownTimer) {
-            clearInterval(store.countdownTimer);
-            store.countdownTimer = null;
-        }
+    cancelActiveCountdown();
 
+    return new Promise(resolve => {
         store.searchState.currentAction = action;
         store.searchState.countdown = seconds;
 
         updateCountdown(seconds, action);
 
-        const timerId = setInterval(() => {
+        let timerId: ReturnType<typeof setInterval> | null = null;
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+
+            if (timerId) clearInterval(timerId);
+            if (store.countdownTimer === timerId) store.countdownTimer = null;
+            if (activeCountdownResolve === finish) activeCountdownResolve = null;
+            resolve();
+        };
+
+        activeCountdownResolve = finish;
+
+        if (seconds <= 0 || !store.isSearching) {
+            finish();
+            return;
+        }
+
+        timerId = setInterval(() => {
             if (!store.isSearching) {
-                clearInterval(timerId);
-                store.countdownTimer = null;
-                resolve();
+                finish();
                 return;
             }
 
@@ -55,9 +82,7 @@ export function countdownAsync(seconds: number, action: string): Promise<void> {
             updateCountdown(store.searchState.countdown, action);
 
             if (store.searchState.countdown <= 0) {
-                clearInterval(timerId);
-                store.countdownTimer = null;
-                resolve();
+                finish();
             }
         }, 1000);
 
@@ -77,6 +102,7 @@ export async function ensureFallbackSearchTerms() {
 }
 
 export type ExecutionPhase = 'points' | 'cards' | 'complete';
+export type SearchExecutionResult = 'navigating' | 'same-page' | 'skipped' | 'stopped';
 
 export function getExecutionPhase(): ExecutionPhase {
     if (!store.currentProgress.completed) return 'points';
@@ -175,6 +201,7 @@ export function getSearchTerm(task: DailyTask | null = getActiveDailyTaskForSear
 
 function skipDailyTask(task: DailyTask) {
     markDailyTaskSkipped(task);
+    updateProgressUI();
     updateDailyTasksUI(store.dailyTasksData);
     store.saveState();
 }
@@ -222,10 +249,7 @@ async function runQueuedDailyTaskFromOpenPanel(): Promise<'clicked' | 'search' |
 }
 
 export function stopAutomatedSearch(finalStatus?: string, preserveProgress = false) {
-    if (store.countdownTimer) {
-        clearInterval(store.countdownTimer);
-        store.countdownTimer = null;
-    }
+    cancelActiveCountdown();
 
     store.resetRuntimeState(preserveProgress);
     updateCountdown(0, '');
@@ -238,11 +262,11 @@ export function stopAutomatedSearch(finalStatus?: string, preserveProgress = fal
     updateStatus(finalStatus || t('status', 'searchStopped'));
 }
 
-export async function performSearch(task?: DailyTask | null) {
-    if (!isDedicatedWorkerContext() || !store.isSearching) return;
+export async function performSearch(task?: DailyTask | null): Promise<SearchExecutionResult> {
+    if (!isDedicatedWorkerContext() || !store.isSearching) return 'stopped';
     if (store.searchState.totalSearchAttempts >= MAX_TOTAL_SEARCH_ATTEMPTS) {
         stopAutomatedSearch(t('status', 'safetyStopped', MAX_TOTAL_SEARCH_ATTEMPTS));
-        return;
+        return 'stopped';
     }
     
     const activeTask = getExecutionPhase() === 'cards' ? (task || getActiveDailyTaskForSearch()) : null;
@@ -253,7 +277,7 @@ export async function performSearch(task?: DailyTask | null) {
     if (!searchTerm) {
         if (activeTask) skipDailyTask(activeTask);
         else store.saveState();
-        return;
+        return 'skipped';
     }
     if (activeTask) {
         recordDailyTaskAttempt(activeTask);
@@ -264,20 +288,42 @@ export async function performSearch(task?: DailyTask | null) {
     store.saveState();
     
     const searchUrl = buildBingSearchUrl(searchTerm);
+
+    if (getRewardsFlyoutIframe()) {
+        console.log('[RewardsHelper] Rewards 浮层仍处于打开状态，使用单次 URL 跳转避免 Bing React SPA 冲突');
+        window.location.href = searchUrl;
+        return 'navigating';
+    }
     
     const typingSuccess = await simulateTypingAndSearch(searchTerm);
     if (typingSuccess) {
-        // Wait up to 5 seconds for page navigation to happen naturally
+        let isUnloading = false;
+        const markUnloading = () => { isUnloading = true; };
+        window.addEventListener('beforeunload', markUnloading, { once: true });
+
         await sleep(5000);
-        console.log('[RewardsHelper] 模拟提交后页面未发生跳转，使用 fallback 跳转');
+        window.removeEventListener('beforeunload', markUnloading);
+
+        if (isUnloading) {
+            console.log('[RewardsHelper] 模拟提交后页面已正常触发跳转');
+            return 'navigating';
+        }
+
+        const currentQ = (new URLSearchParams(window.location.search).get('q') || '').toLowerCase();
+        if (currentQ === searchTerm.toLowerCase()) {
+            console.log('[RewardsHelper] 模拟提交已在当前页面完成更新，无需重复跳转');
+            return 'same-page';
+        }
+        console.log('[RewardsHelper] 模拟提交后页面未发生跳转或更新，使用 fallback 跳转');
     }
     
     window.location.href = searchUrl;
+    return 'navigating';
 }
 
 export async function searchLoop() {
     if (!isDedicatedWorkerContext()) return;
-    while (isDedicatedWorkerContext() && store.isSearching && !store.searchState.needRest) {
+    while (isDedicatedWorkerContext() && store.isSearching) {
         updateStatus(t('status', 'waitingProgress'));
         store.searchState.currentAction = 'checking';
         
@@ -295,7 +341,9 @@ export async function searchLoop() {
                     return;
                 }
                 updateStatus(t('status', 'waitingPanelRetry'));
-                await countdownAsync(Math.floor(getRandomInterval() / 1000), 'waiting');
+                const backoffFactor = 1 + (store.searchState.panelFailureCount - 1) * 0.5;
+                const retryInterval = Math.floor((getRandomInterval() * backoffFactor) / 1000);
+                await countdownAsync(retryInterval, 'waiting');
                 continue;
             }
             
@@ -316,9 +364,11 @@ export async function searchLoop() {
             if (queuedTaskAction === 'search') {
                 updateStatus(t('status', 'executingPanel'));
                 await countdownAsync(2, 'waiting');
-                await performSearch(store.searchState.dailyTasksQueue[0]);
-                if (store.isSearching) continue;
-                return;
+                const searchResult = await performSearch(store.searchState.dailyTasksQueue[0]);
+                if (!store.isSearching || searchResult === 'stopped') return;
+                if (searchResult === 'navigating') return;
+                await sleep(500);
+                continue;
             }
 
             if (queuedTaskAction === 'skipped') {
@@ -377,8 +427,11 @@ export async function searchLoop() {
         await countdownAsync(Math.floor(waitMs / 1000), 'waiting');
         
         if (store.isSearching) {
-            await performSearch();
-            return; // page will navigate, loop ends
+            const searchResult = await performSearch();
+            if (!store.isSearching || searchResult === 'stopped') return;
+            if (searchResult === 'navigating') return;
+            await sleep(500);
+            continue;
         }
     }
 }

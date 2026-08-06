@@ -1,3 +1,5 @@
+import { isElementVisible } from './dom';
+
 const CLAIM_QUERY_PARAM = 'rewards_helper_claim';
 const CLAIM_RETURN_PARAM = 'rewards_helper_return';
 const CLAIM_CHECKED_PARAM = 'rewards_helper_claim_checked';
@@ -47,26 +49,13 @@ function getElementLabels(element: Element): string[] {
     ].map(value => value.replace(/\s+/g, ' ').trim()).filter(Boolean);
 }
 
-function isVisibleAndEnabled(element: Element): boolean {
-    const htmlElement = element as HTMLElement;
-    const style = getComputedStyle(htmlElement);
-    const rect = htmlElement.getBoundingClientRect();
-    const disabled = element.hasAttribute('disabled') ||
-        element.getAttribute('aria-disabled') === 'true';
-    return !disabled &&
-        style.display !== 'none' &&
-        style.visibility !== 'hidden' &&
-        rect.width > 0 &&
-        rect.height > 0;
-}
-
 function findClaimableControl(): HTMLElement | null {
     const controls = document.querySelectorAll<HTMLElement>(
         'button, a, [role="button"], input[type="button"], input[type="submit"]'
     );
     for (const control of Array.from(controls)) {
         if (control.dataset.rewardsHelperClaimAttempted === '1') continue;
-        if (!isVisibleAndEnabled(control)) continue;
+        if (!isElementVisible(control, true)) continue;
         const anchor = control.closest('a[href]') as HTMLAnchorElement | null;
         const href = anchor?.href.toLowerCase() || '';
         if (href.includes('/redeem')) continue;

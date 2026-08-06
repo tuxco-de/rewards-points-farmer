@@ -23,6 +23,28 @@ describe('Rewards parser', () => {
         });
     });
 
+    test('parses reverse English progress statement', () => {
+        expect(parseEarnedProgressText(
+            'Earn up to 90 points by searching. You earned 45 points so far.'
+        )).toMatchObject({
+            current: 45,
+            total: 90,
+            completed: false,
+            rule: 'earned_en_reverse'
+        });
+    });
+
+    test('parses generic PC search fraction format', () => {
+        expect(parseEarnedProgressText(
+            'PC Search 60/90 pts'
+        )).toMatchObject({
+            current: 60,
+            total: 90,
+            completed: false,
+            rule: 'generic_fraction'
+        });
+    });
+
     test('parses a completed Chinese summary that labels the total as reward points', () => {
         expect(parseEarnedProgressText(
             '你已获得 200 积分！每天继续搜索并获得最多 200 奖励积分'
@@ -85,6 +107,19 @@ describe('Rewards parser', () => {
         expect(isRewardsTaskCard(card)).toBe(true);
     });
 
+    test('rejects the point-free Rewards browser extension promotion', () => {
+        const card = document.createElement('div');
+        card.className = 'promo_cont';
+        card.setAttribute('aria-label', 'Rewards in your browser - Offer not Completed');
+        card.innerHTML = `
+            <a href="https://www.bing.com/set/browserextension/rewards?channel=rwdamc">
+                <span class="promo-title">Rewards in your browser</span>
+                <span>Add our new browser extension &amp; earn 30 points.</span>
+            </a>`;
+
+        expect(isRewardsTaskCard(card)).toBe(false);
+    });
+
     test('does not mistake a checkuser URL for a completion marker', () => {
         const card = document.createElement('div');
         card.className = 'promo_cont';
@@ -95,6 +130,36 @@ describe('Rewards parser', () => {
             </a>`;
 
         expect(getCardCompletionStatus(card)).toBe('未完成');
+    });
+
+    test('does not treat a checklist card with complete and inprogress classes as completed', () => {
+        const card = document.createElement('div');
+        card.className = 'promo_cont';
+        card.innerHTML = `
+            <a href="https://www.bing.com/?form=ML2PCR">
+                <span class="promo-title">即将起飞</span>
+                <span class="fc_auto pc b_subtitle complete slim inprogress">
+                    <span class="shortPoint point" aria-label="10 points">10</span>
+                </span>
+            </a>`;
+
+        expect(getCardCompletionStatus(card)).toBe('未完成');
+    });
+
+    test('reads the completed point label nested inside a point container', () => {
+        const card = document.createElement('div');
+        card.className = 'promo_cont';
+        card.innerHTML = `
+            <a href="https://www.bing.com/?form=ML2PCR">
+                <span class="promo-title">即将起飞</span>
+                <span class="fc_auto pc b_subtitle complete slim inprogress">
+                    <span class="point_cont slim">
+                        <span class="shortPoint point" aria-label="10 添加到帐户的积分">✓ 10</span>
+                    </span>
+                </span>
+            </a>`;
+
+        expect(getCardCompletionStatus(card)).toBe('已完成');
     });
 
     test.each([

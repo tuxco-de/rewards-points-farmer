@@ -1,5 +1,5 @@
 import { config } from './config';
-import { DailyTask, getDailyTaskKey, isUrlLikeSearchCandidate, removeDailyTask, store, upsertDailyTask } from './state';
+import { DailyTask, DailyTaskDisplayItem, getDailyTaskKey, isUrlLikeSearchCandidate, normalizeCandidateText, removeDailyTask, store, upsertDailyTask } from './state';
 import { updateDailyTasksUI, updateProgressUI } from './ui';
 import { t } from './i18n';
 import { getRewardsFlyoutIframe } from './dom';
@@ -25,14 +25,28 @@ export function parseEarnedProgressText(value: string): EarnedProgress | null {
         {
             rule: 'earned_en',
             match: /You earned\s*(\d+)\s*points?(?:\s+already)?.{0,300}?(?:earn|get)\s+up\s+to\s*(\d+)\s*points?/i
+        },
+        {
+            rule: 'earned_en_reverse',
+            match: /(?:earn|get)\s+up\s+to\s*(\d+)\s*points?.{0,300}?You earned\s*(\d+)\s*points?/i,
+            swap: true
+        },
+        {
+            rule: 'generic_fraction',
+            match: /(?:pc|daily)?\s*search.{0,50}?(\d+)\s*(?:\/|of)\s*(\d+)\s*(?:pts|points|积分|分)?/i
+        },
+        {
+            rule: 'generic_fraction_zh',
+            match: /(?:搜索|pc).{0,50}?(\d+)\s*(?:\/|of|个，共)\s*(\d+)\s*(?:积分|分|个)?/i
         }
     ];
 
-    for (const { rule, match: pattern } of incompleteRules) {
+    for (const { rule, match: pattern, swap } of incompleteRules) {
         const match = text.match(pattern);
         if (!match) continue;
-        const current = parseInt(match[1], 10);
-        const total = parseInt(match[2], 10);
+        const current = parseInt(swap ? match[2] : match[1], 10);
+        const total = parseInt(swap ? match[1] : match[2], 10);
+        if (Number.isNaN(current) || Number.isNaN(total) || total <= 0) continue;
         return {
             current,
             total,
@@ -56,6 +70,7 @@ export function parseEarnedProgressText(value: string): EarnedProgress | null {
         const match = text.match(pattern);
         if (!match) continue;
         const current = parseInt(match[1], 10);
+        if (Number.isNaN(current)) continue;
         return { current, total: current, completed: true, rule };
     }
 
@@ -181,6 +196,14 @@ export function isRewardsTaskCard(card: Element): boolean {
         }
     }
 
+    const actionPath = isRelativeBingPath
+        ? normalizedHref.split(/[?#]/, 1)[0]
+        : parsedUrl?.pathname.toLowerCase() || '';
+    if (actionPath.startsWith('/set/browserextension/')) {
+        console.log(`[RewardsHelper] 剔除卡片 (浏览器扩展推广): aria="${ariaLabel}"`);
+        return false;
+    }
+
     const points = getCardPoints(card);
     const isPointBackedBingActivity = points > 0 && (
         isRelativeBingPath || parsedUrl?.hostname.toLowerCase() !== 'rewards.bing.com'
@@ -269,11 +292,11 @@ export function getCardCompletionStatus(card: Element): string {
     const ariaLabel = card.getAttribute('aria-label') || '';
     const text = card.textContent || '';
 
-    let pAriaLower = '';
-    const pointEl = card.querySelector('.point, .shortPoint, [class*="point"]');
-    if (pointEl) {
-        pAriaLower = (pointEl.getAttribute('aria-label') || '').toLowerCase();
-    }
+    const pAriaLower = Array.from(card.querySelectorAll('.point, .shortPoint, [class*="point"]'))
+        .map(pointEl => pointEl.getAttribute('aria-label') || '')
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
 
     const ariaLower = ariaLabel.toLowerCase();
     
@@ -314,21 +337,28 @@ export function getCardCompletionStatus(card: Element): string {
 
 function getReactPromotionTitle(card: Element): string {
     try {
-        for (const key of Object.keys(card)) {
+        const cardRecord = card as unknown as Record<string, unknown>;
+        for (const key of Object.keys(cardRecord)) {
             if (key.startsWith('__reactEventHandlers$') || key.startsWith('__reactProps$') || key.startsWith('__reactFiber$')) {
-                const reactObj = (card as any)[key];
+                const reactObj = cardRecord[key];
 
-                const findTitle = (obj: any, depth: number): string => {
+                const findTitle = (obj: unknown, depth: number): string => {
                     if (depth > 6 || !obj || typeof obj !== 'object') return '';
-                    if (obj.promotion && obj.promotion.title && typeof obj.promotion.title === 'string') {
-                        return obj.promotion.title;
+                    const rec = obj as Record<string, unknown>;
+                    if (rec.promotion && typeof rec.promotion === 'object') {
+                        const promo = rec.promotion as Record<string, unknown>;
+                        if (typeof promo.title === 'string' && promo.title) {
+                            return promo.title;
+                        }
                     }
-                    for (const k of Object.keys(obj)) {
+                    for (const k of Object.keys(rec)) {
                         if (k === 'children' || k === 'props' || k === 'promotion' || !isNaN(Number(k))) {
                             try {
-                                const res = findTitle(obj[k], depth + 1);
+                                const res = findTitle(rec[k], depth + 1);
                                 if (res) return res;
-                            } catch (e) {}
+                            } catch {
+                                // Ignore inner property access errors
+                            }
                         }
                     }
                     return '';
@@ -345,13 +375,7 @@ function getReactPromotionTitle(card: Element): string {
 }
 
 function cleanupTaskText(value: string): string {
-    return value
-        .replace(/[\u200B-\u200D\uFEFF]/g, '')
-        .replace(/\s+/g, ' ')
-        .replace(/\b(?:not completed|is completed|completed|points?|pts|icon)\b/gi, ' ')
-        .replace(/未完成|已完成|积分|添加/g, ' ')
-        .replace(/\+\s*\d+/g, ' ')
-        .trim();
+    return normalizeCandidateText(value);
 }
 
 function getHrefQuery(href: string | null): string {
@@ -628,7 +652,7 @@ export function getDataFromPanel() {
     store.searchState.panelParsed = false;
     let targetDoc = document;
     let isIframe = false;
-    let iframeWin: any = window;
+    let iframeWin: (Window & Record<string, any>) | null = window;
 
     const iframe = getRewardsFlyoutIframe();
     if (iframe) {
@@ -640,8 +664,9 @@ export function getDataFromPanel() {
                 iframeWin = iframe.contentWindow;
                 console.log('成功访问iframe文档');
             }
-        } catch (e: any) {
-            console.log('访问iframe文档失败:', e.message);
+        } catch (e: unknown) {
+            const err = e as Error;
+            console.log('访问iframe文档失败:', err.message);
         }
     } else {
         console.log('未找到iframe，尝试从主文档获取数据');
@@ -654,7 +679,7 @@ export function getDataFromPanel() {
 
     try {
         (() => {
-            const tasks: any[] = [];
+            const tasks: DailyTaskDisplayItem[] = [];
             const cardsArray = discoverCards(targetDoc);
             const finalCards = filterCards(cardsArray);
             const observedCardKeys = new Set<string>();
@@ -770,8 +795,11 @@ export function getDataFromPanel() {
             store.currentProgress.total = currentBestProgress.max;
             console.log('搜索进度: ' + current + '/' + store.currentProgress.total);
 
+            const progressCompleted = typeof currentBestProgress.completed === 'boolean'
+                ? currentBestProgress.completed
+                : current >= store.currentProgress.total;
             const hasAttemptedSearch = store.searchState.totalSearchAttempts > 0;
-            if (hasAttemptedSearch && current <= store.currentProgress.lastChecked && store.isSearching) {
+            if (hasAttemptedSearch && !progressCompleted && current <= store.currentProgress.lastChecked && store.isSearching) {
                 console.log(`进度未增加: ${current} <= ${store.currentProgress.lastChecked}，已连续 ${store.currentProgress.noProgressCount + 1} 次未增加`);
                 store.currentProgress.noProgressCount++;
 
@@ -788,10 +816,10 @@ export function getDataFromPanel() {
             store.currentProgress.current = current;
             store.currentProgress.lastChecked = current;
 
-            store.currentProgress.completed = typeof currentBestProgress.completed === 'boolean'
-                ? currentBestProgress.completed
-                : current >= store.currentProgress.total;
+            store.currentProgress.completed = progressCompleted;
             if (store.currentProgress.completed) {
+                store.currentProgress.noProgressCount = 0;
+                store.searchState.needRest = false;
                 console.log(`进度数字表明任务已完成: ${current}/${store.currentProgress.total}`);
             }
 

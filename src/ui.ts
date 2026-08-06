@@ -1,5 +1,5 @@
 import { config } from './config';
-import { store } from './state';
+import { DailyTaskDisplayItem, store } from './state';
 import { t } from './i18n';
 import { CURRENT_VERSION } from './update';
 
@@ -537,10 +537,18 @@ export function updateProgressUI() {
     const curr = store.currentProgress.current || 0;
     const total = store.currentProgress.total || 0;
     const isCompleted = store.currentProgress.completed;
+    const resolvedCardCount = store.dailyTasksData.filter(task => task.status !== '未完成').length;
+    const displayedCardTotal = store.dailyTasksData.length || store.searchState.dailyTasksQueue.length;
+    const hasPendingCards = store.searchState.dailyTasksQueue.length > 0 ||
+        store.dailyTasksData.some(task => task.status === '未完成');
     
     const text = isCompleted ? t('ui', 'completed') : `${curr}/${total}`;
     
-    if (badgeText) badgeText.textContent = text;
+    if (badgeText) {
+        badgeText.textContent = isCompleted && hasPendingCards
+            ? t('ui', 'cardProgress', resolvedCardCount, displayedCardTotal)
+            : text;
+    }
     if (progressText) progressText.textContent = text;
     
     if (progressFill && total > 0) {
@@ -570,7 +578,7 @@ export function updateCountdown(seconds: number, action: string) {
     }
 }
 
-export function updateDailyTasksUI(tasks: any[]) {
+export function updateDailyTasksUI(tasks: DailyTaskDisplayItem[]) {
     const tasksList = document.getElementById('rh-tasks-list');
     const tasksCount = document.getElementById('rh-tasks-count');
     if (!tasksList) return;

@@ -37,20 +37,24 @@ export const SEARCH_SUBMIT_SELECTOR = [
 export const SEARCH_FORM_SELECTOR = '#sb_form, form[action*="/search"]';
 export const SEARCH_RESULT_SELECTOR = '.b_algo, #b_results > li, main[aria-label*="search" i] h2, main[aria-label*="搜索"] h2';
 
-function isElementVisible(element: Element): element is HTMLElement {
+export function isElementVisible(element: Element, checkDisabled = false): element is HTMLElement {
     if (!(element instanceof HTMLElement) || element.getAttribute('aria-hidden') === 'true') return false;
+    if (checkDisabled) {
+        const disabled = element.hasAttribute('disabled') || element.getAttribute('aria-disabled') === 'true';
+        if (disabled) return false;
+    }
     const rect = element.getBoundingClientRect();
     const style = window.getComputedStyle(element);
     return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
 }
 
 export function findVisibleElement(selector: string, context: Document | Element = document): HTMLElement | null {
-    return Array.from(context.querySelectorAll(selector)).find(isElementVisible) || null;
+    return Array.from(context.querySelectorAll(selector)).find(el => isElementVisible(el)) || null;
 }
 
 export function getRewardsFlyoutIframe(): HTMLIFrameElement | null {
     const frames = Array.from(document.querySelectorAll(REWARDS_FLYOUT_SELECTOR)) as HTMLIFrameElement[];
-    return frames.find(isElementVisible) || frames[0] || null;
+    return frames.find(el => isElementVisible(el)) || frames[0] || null;
 }
 
 export async function waitForElement(selector: string, timeout = 5000, context: Document | Element = document): Promise<Element | null> {
@@ -64,7 +68,8 @@ export async function waitForElement(selector: string, timeout = 5000, context: 
                 resolve(el);
             }
         });
-        observer.observe((context as any).body || context, { childList: true, subtree: true });
+        const targetNode = (context as Document).body || context;
+        observer.observe(targetNode, { childList: true, subtree: true });
         setTimeout(() => {
             observer.disconnect();
             resolve(null);
@@ -100,19 +105,16 @@ export async function simulateMouseInteraction(element: Element) {
 }
 
 function clickRewardsEntry(element: HTMLElement) {
-    const anchor = element.closest('a[href]') as HTMLAnchorElement | null;
-    if (!anchor) {
+    try {
+        const anchor = element.closest('a[href]') as HTMLAnchorElement | null;
+        if (anchor) {
+            const preventNav = (e: Event) => e.preventDefault();
+            anchor.addEventListener('click', preventNav, { capture: true, once: true });
+        }
         element.click();
-        return;
+    } catch (e) {
+        console.warn('[RewardsHelper] 点击 Rewards 入口出错:', e);
     }
-
-    const preventNavigation = (event: Event) => event.preventDefault();
-    anchor.addEventListener('click', preventNavigation, { capture: true, once: true });
-    element.dispatchEvent(new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        composed: true
-    }));
 }
 
 export async function closeRewardsSidebarAsync() {
@@ -122,7 +124,35 @@ export async function closeRewardsSidebarAsync() {
             const isReactFlyout = Boolean(iframe.closest('#rewid-f')) ||
                 iframe.src.includes('/rewards/panelflyout');
             if (isReactFlyout) {
-                console.log('[RewardsHelper] 新版 Rewards flyout 保持打开，避免触发 Bing React 关闭异常');
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                const closeSelectors = [
+                    'button[aria-label="Close" i]',
+                    'button[aria-label*="关闭"]',
+                    'button[title="Close" i]',
+                    'button[title*="关闭"]',
+                    '[data-testid*="close" i]'
+                ].join(', ');
+                const closeButton = iframeDoc
+                    ? (iframeDoc.querySelector(closeSelectors) as HTMLElement | null) ||
+                        Array.from(iframeDoc.querySelectorAll('button')).find(button =>
+                            /^(?:close|dismiss|关闭)$/i.test((button.textContent || '').trim())
+                        ) as HTMLElement | undefined
+                    : null;
+
+                if (closeButton) {
+                    closeButton.click();
+                    for (let attempt = 0; attempt < 8; attempt++) {
+                        await sleep(200);
+                        const currentFrame = getRewardsFlyoutIframe();
+                        if (!currentFrame || !isElementVisible(currentFrame)) {
+                            console.log('[RewardsHelper] 已通过浮层关闭按钮关闭 Rewards 面板');
+                            return;
+                        }
+                    }
+                    console.warn('[RewardsHelper] Rewards 浮层关闭按钮未生效，将避免 SPA 表单提交');
+                } else {
+                    console.log('[RewardsHelper] Rewards 浮层没有可用的关闭按钮，将避免 SPA 表单提交');
+                }
                 return;
             }
 
@@ -201,11 +231,28 @@ export async function simulateTypingAndSearch(searchTerm: string): Promise<boole
         input.focus();
         await sleep(100);
 
-        const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-        if (valueSetter) valueSetter.call(input, searchTerm);
-        else input.value = searchTerm;
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
+        let inputPrototype: object | null = Object.getPrototypeOf(input);
+        let valueSetter: ((this: HTMLInputElement, value: string) => void) | undefined;
+        while (inputPrototype && !valueSetter) {
+            valueSetter = Object.getOwnPropertyDescriptor(inputPrototype, 'value')?.set as
+                ((this: HTMLInputElement, value: string) => void) | undefined;
+            inputPrototype = Object.getPrototypeOf(inputPrototype);
+        }
+
+        if (!valueSetter) {
+            console.warn('[RewardsHelper] 未找到搜索框的原生 value setter，改用 URL 跳转兜底');
+            return false;
+        }
+
+        try {
+            Reflect.apply(valueSetter, input, [searchTerm]);
+            const eventWindow = input.ownerDocument.defaultView || window;
+            input.dispatchEvent(new eventWindow.Event('input', { bubbles: true }));
+            input.dispatchEvent(new eventWindow.Event('change', { bubbles: true }));
+        } catch {
+            console.warn('[RewardsHelper] 搜索框原生赋值失败，改用 URL 跳转兜底');
+            return false;
+        }
         await sleep(200 + Math.random() * 300);
 
         const searchBtn = findVisibleElement(SEARCH_SUBMIT_SELECTOR);

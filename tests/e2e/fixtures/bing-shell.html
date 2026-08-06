@@ -68,6 +68,7 @@
       const unconfiguredPromotion = params.get('unconfiguredPromotion') === '1';
       const unconfiguredEnglishPromotion = params.get('unconfiguredEnglishPromotion') === '1';
       const currentRewardsCards = params.get('currentRewardsCards') === '1';
+      const spaSearch = params.get('spaSearch') === '1';
       const firstPromotionTitle = unconfiguredEnglishPromotion
         ? 'Plan your future'
         : (unconfiguredPromotion ? '规划你的未来' : '查找住宿地点');
@@ -188,6 +189,7 @@
         <html>
           <body>
             <main id="app" aria-label="Microsoft Rewards">
+              <button type="button" data-flyout-close aria-label="Close">Close</button>
               <section class="flyout_exb_card">
                 ${modernProgressMarkup}
                 <div id="exb-activityChecklist">
@@ -286,6 +288,11 @@
         }
         iframe.srcdoc = modernLayout ? modernFlyoutMarkup : legacyFlyoutMarkup;
         iframe.addEventListener('load', () => {
+          iframe.contentDocument.querySelector('[data-flyout-close]')?.addEventListener('click', () => {
+            document.body.dataset.flyoutCloseCount = String(Number(document.body.dataset.flyoutCloseCount || 0) + 1);
+            document.getElementById('rewid-f')?.remove();
+            rewardsBadge.setAttribute('aria-expanded', 'false');
+          });
           iframe.contentDocument.addEventListener('click', event => {
             const card = event.target.closest('.rw-card, .promo_cont a');
             if (!card) return;
@@ -309,6 +316,12 @@
       searchForm.addEventListener('submit', event => {
         event.preventDefault();
         document.body.dataset.lastQuery = searchInput.value;
+        if (spaSearch) {
+          document.body.dataset.spaSubmitCount = String(Number(document.body.dataset.spaSubmitCount || 0) + 1);
+          const nextUrl = new URL(window.location.href);
+          nextUrl.searchParams.set('q', searchInput.value);
+          history.replaceState({}, '', nextUrl);
+        }
       });
     </script>
   </body>

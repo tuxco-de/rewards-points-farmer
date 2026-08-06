@@ -2,7 +2,7 @@ import { store, STORAGE_KEY } from './state';
 import { createUI, updateStatus, setSearchButtonState, updateProgressUI, updateDailyTasksUI, showToast, openSettingsPanel } from './ui';
 import { openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent } from './dom';
 import { getDataFromPanel, getSearchTermsFromMainDoc } from './parser';
-import { searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm, getExecutionPhase } from './search';
+import { searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm, getExecutionPhase, type SearchExecutionResult } from './search';
 import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
 import { consumePendingWorkerCommand, initializeDedicatedWorkerContext, isDedicatedWorkerContext, listenForWorkerCommands, requestDedicatedWorkerStart, requestDedicatedWorkerStop } from './worker';
@@ -15,7 +15,7 @@ declare global {
     interface Window {
         startRewardsTask: () => void;
         stopRewardsTask: () => void;
-        __e2e_performSearch: () => Promise<void>;
+        __e2e_performSearch: () => Promise<SearchExecutionResult>;
         __e2e_simulateTypingAndSearch: (term: string) => Promise<boolean>;
         __e2e_getSearchTerm: () => string;
         __e2e_getExecutionPhase: () => string;

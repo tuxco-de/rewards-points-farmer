@@ -31,14 +31,24 @@ function extractQueryFromUrl(url: string): string {
     }
 }
 
-function normalizeCandidate(candidate: string): string {
+export interface DailyTaskDisplayItem {
+    name: string;
+    status: string;
+    title?: string;
+}
+
+export function normalizeCandidateText(candidate: string): string {
     return candidate
         .replace(/[\u200B-\u200D\uFEFF]/g, '')
         .replace(/\s+/g, ' ')
-        .replace(/\b(?:not completed|completed|points?|pts)\b/gi, ' ')
+        .replace(/\b(?:not completed|is completed|completed|points?|pts|icon)\b/gi, ' ')
         .replace(/未完成|已完成|已跳过|积分|添加/g, ' ')
         .replace(/\+\s*\d+/g, ' ')
         .trim();
+}
+
+export function normalizeCandidate(candidate: string): string {
+    return normalizeCandidateText(candidate);
 }
 
 export function isUrlLikeSearchCandidate(candidate: string): boolean {
@@ -209,7 +219,7 @@ class StateStore {
         "movie recommendations", "TV series to watch", "anime reviews", "manga online", "film directing",
         "book recommendations", "bestselling novels", "audiobooks", "poetry classic", "reading habits"
     ];
-    dailyTasksData: any[] = [];
+    dailyTasksData: DailyTaskDisplayItem[] = [];
     countdownTimer: ReturnType<typeof setInterval> | null = null;
     
     currentProgress = {
