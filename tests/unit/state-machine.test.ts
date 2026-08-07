@@ -19,6 +19,25 @@ describe('task execution state machine', () => {
         expect(getExecutionPhase()).toBe('complete');
     });
 
+    test('keeps points search ahead of queued card tasks while daily progress is incomplete', () => {
+        store.currentProgress.current = 35;
+        store.currentProgress.total = 200;
+        store.currentProgress.completed = false;
+        store.searchState.panelParsed = true;
+        store.searchState.dailyTasksQueue = [{
+            url: '/search?q=recipe',
+            title: '学习新食谱',
+            status: '未完成',
+            points: 10,
+            kind: 'search-promotion',
+            searchTerms: ['西红柿炒蛋'],
+            attempts: 0,
+            source: 'card'
+        }];
+
+        expect(getExecutionPhase()).toBe('points');
+    });
+
     test('resolves the previous countdown when a new countdown replaces it', async () => {
         jest.useFakeTimers();
         store.isSearching = true;

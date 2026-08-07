@@ -45,6 +45,28 @@ describe('Rewards parser', () => {
         });
     });
 
+    test('ignores the 1/1 search streak and selects the actual daily points progress', () => {
+        expect(parseEarnedProgressText(
+            'Use Bing Search (1/1 searches) Daily search 35/200 points'
+        )).toMatchObject({
+            current: 35,
+            total: 200,
+            completed: false,
+            rule: 'generic_fraction'
+        });
+    });
+
+    test('selects the actual Chinese daily search progress after a 1/1 streak', () => {
+        expect(parseEarnedProgressText(
+            '使用必应搜索(1/1 搜索) 每日搜索 35/200 每天搜索并赚取最多 200 点积分'
+        )).toMatchObject({
+            current: 35,
+            total: 200,
+            completed: false,
+            rule: 'generic_fraction_zh'
+        });
+    });
+
     test('parses a completed Chinese summary that labels the total as reward points', () => {
         expect(parseEarnedProgressText(
             '你已获得 200 积分！每天继续搜索并获得最多 200 奖励积分'

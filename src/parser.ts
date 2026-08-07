@@ -17,7 +17,12 @@ export function parseEarnedProgressText(value: string): EarnedProgress | null {
     const text = value.replace(/\s+/g, ' ').trim();
     if (!text) return null;
 
-    const incompleteRules = [
+    const incompleteRules: Array<{
+        rule: string;
+        match: RegExp;
+        swap?: boolean;
+        minTotal?: number;
+    }> = [
         {
             rule: 'earned_zh',
             match: /你已获得\s*(\d+)\s*(?:奖励\s*)?积分.{0,300}?每天继续搜索并获得最多\s*(\d+)\s*(?:奖励\s*)?积分/
@@ -33,26 +38,35 @@ export function parseEarnedProgressText(value: string): EarnedProgress | null {
         },
         {
             rule: 'generic_fraction',
-            match: /(?:pc|daily)?\s*search.{0,50}?(\d+)\s*(?:\/|of)\s*(\d+)\s*(?:pts|points|积分|分)?/i
+            match: /(?:pc|daily)?\s*search.{0,50}?(\d+)\s*(?:\/|of)\s*(\d+)\s*(?:pts|points|积分|分)?/i,
+            minTotal: 12
         },
         {
             rule: 'generic_fraction_zh',
-            match: /(?:搜索|pc).{0,50}?(\d+)\s*(?:\/|of|个，共)\s*(\d+)\s*(?:积分|分|个)?/i
+            match: /(?:搜索|pc).{0,50}?(\d+)\s*(?:\/|of|个，共)\s*(\d+)\s*(?:积分|分|个)?/i,
+            minTotal: 12
         }
     ];
 
-    for (const { rule, match: pattern, swap } of incompleteRules) {
-        const match = text.match(pattern);
-        if (!match) continue;
-        const current = parseInt(swap ? match[2] : match[1], 10);
-        const total = parseInt(swap ? match[1] : match[2], 10);
-        if (Number.isNaN(current) || Number.isNaN(total) || total <= 0) continue;
-        return {
-            current,
-            total,
-            completed: current >= total,
-            rule
-        };
+    for (const { rule, match: pattern, swap, minTotal = 1 } of incompleteRules) {
+        const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+        let bestMatch: EarnedProgress | null = null;
+
+        for (const match of text.matchAll(globalPattern)) {
+            const current = parseInt(swap ? match[2] : match[1], 10);
+            const total = parseInt(swap ? match[1] : match[2], 10);
+            if (Number.isNaN(current) || Number.isNaN(total) || total < minTotal) continue;
+
+            const candidate: EarnedProgress = {
+                current,
+                total,
+                completed: current >= total,
+                rule
+            };
+            if (!bestMatch || candidate.total > bestMatch.total) bestMatch = candidate;
+        }
+
+        if (bestMatch) return bestMatch;
     }
 
     const completedRules = [
