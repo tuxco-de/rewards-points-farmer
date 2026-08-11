@@ -8,6 +8,116 @@ import { isDedicatedWorkerContext } from './worker';
 import { buildBingSearchUrl, normalizeBingTaskUrl } from './navigation';
 
 let activeCountdownResolve: (() => void) | null = null;
+const RESULT_CLICK_SESSION_PREFIX = 'rewards_helper_result_click:';
+const RESULT_PREVIEW_TARGET = '_blank';
+export const SEARCH_RESULT_CLICK_PROBABILITY = 0.5;
+export const TOP_SEARCH_RESULT_LIMIT = 3;
+const TOP_SEARCH_RESULT_WEIGHTS = [0.5, 0.3, 0.2];
+
+export function getTopOrganicSearchResults(root: ParentNode = document): HTMLAnchorElement[] {
+    const links = Array.from(root.querySelectorAll<HTMLAnchorElement>([
+        '#b_results > li.b_algo h2 > a[href]',
+        '#b_results > li.b_algo h2 a[href]',
+        '#b_results > .b_algo h2 > a[href]',
+        'main[aria-label*="search" i] li.b_algo h2 a[href]',
+        'main[aria-label*="搜索"] li.b_algo h2 a[href]'
+    ].join(', ')));
+    const seen = new Set<string>();
+
+    return links.filter(link => {
+        if (link.closest('.b_ad, [data-ad], [aria-label*="Sponsored" i], [aria-label*="广告"]')) return false;
+        const rawHref = (link.getAttribute('href') || '').trim();
+        const title = (link.textContent || '').trim();
+        if (!rawHref || !title || rawHref.startsWith('#') || /^javascript:/i.test(rawHref)) return false;
+
+        try {
+            const url = new URL(rawHref, window.location.href);
+            if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+            const key = url.href.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        } catch {
+            return false;
+        }
+    }).slice(0, TOP_SEARCH_RESULT_LIMIT);
+}
+
+export function shouldClickSearchResult(roll = Math.random()): boolean {
+    return roll < SEARCH_RESULT_CLICK_PROBABILITY;
+}
+
+export function pickTopSearchResult(
+    results: HTMLAnchorElement[],
+    roll = Math.random()
+): HTMLAnchorElement | null {
+    const candidates = results.slice(0, TOP_SEARCH_RESULT_LIMIT);
+    if (candidates.length === 0) return null;
+
+    const weights = TOP_SEARCH_RESULT_WEIGHTS.slice(0, candidates.length);
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    let threshold = Math.min(Math.max(roll, 0), 0.999999) * totalWeight;
+    for (let index = 0; index < candidates.length; index++) {
+        threshold -= weights[index];
+        if (threshold < 0) return candidates[index];
+    }
+    return candidates[candidates.length - 1];
+}
+
+function getResultClickMarker(query: string): string {
+    return `${RESULT_CLICK_SESSION_PREFIX}${query.trim().toLowerCase()}`;
+}
+
+export async function maybeClickTopSearchResult(random: () => number = Math.random): Promise<boolean> {
+    const query = new URLSearchParams(window.location.search).get('q') || '';
+    if (!query.trim()) return false;
+
+    const marker = getResultClickMarker(query);
+    try {
+        if (sessionStorage.getItem(marker) === '1') return false;
+    } catch {
+        // Continue without duplicate suppression when sessionStorage is unavailable.
+    }
+
+    const results = getTopOrganicSearchResults();
+    if (results.length === 0) return false;
+
+    try {
+        sessionStorage.setItem(marker, '1');
+    } catch {
+        // The click itself can still proceed.
+    }
+
+    if (!shouldClickSearchResult(random())) {
+        console.log(`[RewardsHelper] 本次搜索结果点击未触发 (概率 ${SEARCH_RESULT_CLICK_PROBABILITY * 100}%)`);
+        return false;
+    }
+
+    const selected = pickTopSearchResult(results, random());
+    if (!selected) return false;
+
+    await simulateMouseInteraction(selected);
+    if (!store.isSearching) return false;
+
+    const originalTarget = selected.getAttribute('target');
+    const originalRel = selected.getAttribute('rel');
+    try {
+        selected.setAttribute('target', RESULT_PREVIEW_TARGET);
+        selected.setAttribute('rel', 'noopener noreferrer');
+        selected.click();
+        const rank = results.indexOf(selected) + 1;
+        console.log(`[RewardsHelper] 已点击第 ${rank} 条自然搜索结果: ${(selected.textContent || '').trim().substring(0, 80)}`);
+        return true;
+    } catch (error) {
+        console.warn('[RewardsHelper] 点击搜索结果失败:', error);
+        return false;
+    } finally {
+        if (originalTarget === null) selected.removeAttribute('target');
+        else selected.setAttribute('target', originalTarget);
+        if (originalRel === null) selected.removeAttribute('rel');
+        else selected.setAttribute('rel', originalRel);
+    }
+}
 
 function cancelActiveCountdown() {
     if (store.countdownTimer) {
@@ -324,6 +434,11 @@ export async function performSearch(task?: DailyTask | null): Promise<SearchExec
 export async function searchLoop() {
     if (!isDedicatedWorkerContext()) return;
     while (isDedicatedWorkerContext() && store.isSearching) {
+        if (store.searchState.totalSearchAttempts > 0) {
+            await maybeClickTopSearchResult();
+            if (!store.isSearching) return;
+        }
+
         updateStatus(t('status', 'waitingProgress'));
         store.searchState.currentAction = 'checking';
         
