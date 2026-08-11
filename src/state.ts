@@ -1,6 +1,7 @@
 import { config } from './config';
 
 export const STORAGE_KEY = 'bing_rewards_auto_searcher_state';
+export const DAILY_SEARCH_HISTORY_KEY = 'bing_rewards_daily_search_history';
 const CONFIG_KEY = 'bing_rewards_config';
 export const MAX_DAILY_TASK_ATTEMPTS = 4;
 export const MAX_PANEL_FAILURES = 5;
@@ -77,6 +78,63 @@ function uniqueCandidates(candidates: string[]): string[] {
         }
     });
     return result;
+}
+
+function getLocalDateKey(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function normalizeSearchHistoryTerms(terms: unknown): string[] {
+    if (!Array.isArray(terms)) return [];
+    const result: string[] = [];
+    terms.forEach(value => {
+        if (typeof value !== 'string') return;
+        const term = value.replace(/\s+/g, ' ').trim();
+        if (!term || result.some(existing => existing.toLowerCase() === term.toLowerCase())) return;
+        result.push(term);
+    });
+    return result.slice(-500);
+}
+
+export function loadDailySearchHistory(now = new Date()): string[] {
+    try {
+        const raw = localStorage.getItem(DAILY_SEARCH_HISTORY_KEY);
+        if (!raw) return [];
+        const history = JSON.parse(raw);
+        if (history?.date !== getLocalDateKey(now)) {
+            localStorage.removeItem(DAILY_SEARCH_HISTORY_KEY);
+            return [];
+        }
+        return normalizeSearchHistoryTerms(history.terms);
+    } catch {
+        return [];
+    }
+}
+
+export function saveDailySearchHistory(terms: string[], now = new Date()) {
+    try {
+        localStorage.setItem(DAILY_SEARCH_HISTORY_KEY, JSON.stringify({
+            date: getLocalDateKey(now),
+            terms: normalizeSearchHistoryTerms(terms)
+        }));
+    } catch {
+        // Runtime state still retains the terms when storage is unavailable.
+    }
+}
+
+export function hasUsedSearchTerm(candidate: string, usedTerms = store.usedSearchTerms): boolean {
+    const key = candidate.replace(/\s+/g, ' ').trim().toLowerCase();
+    return Boolean(key) && usedTerms.some(term => term.toLowerCase() === key);
+}
+
+export function rememberSearchTerm(term: string) {
+    const normalized = term.replace(/\s+/g, ' ').trim();
+    if (!normalized || hasUsedSearchTerm(normalized)) return;
+    store.usedSearchTerms.push(normalized);
+    saveDailySearchHistory(store.usedSearchTerms);
 }
 
 function normalizeDailyTaskEntry(entry: unknown): DailyTask | null {

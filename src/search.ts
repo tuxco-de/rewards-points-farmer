@@ -1,5 +1,5 @@
 import { config } from './config';
-import { DailyTask, getDailyTaskSearchTerm, markDailyTaskSkipped, MAX_DAILY_TASK_ATTEMPTS, MAX_PANEL_FAILURES, MAX_REST_CYCLES, MAX_TOTAL_SEARCH_ATTEMPTS, recordDailyTaskAttempt, store, sleep, getRandomInterval } from './state';
+import { DailyTask, getDailyTaskSearchTerm, hasUsedSearchTerm, loadDailySearchHistory, markDailyTaskSkipped, MAX_DAILY_TASK_ATTEMPTS, MAX_PANEL_FAILURES, MAX_REST_CYCLES, MAX_TOTAL_SEARCH_ATTEMPTS, recordDailyTaskAttempt, rememberSearchTerm, store, sleep, getRandomInterval } from './state';
 import { updateStatus, updateCountdown, showCompletionNotification, setSearchButtonState, updateDailyTasksUI, updateProgressUI } from './ui';
 import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, getRewardsFlyoutIframe, waitForIframeContent, simulateTypingAndSearch, SEARCH_RESULT_SELECTOR } from './dom';
 import { getDataFromPanel, getSearchTermsFromMainDoc, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
@@ -251,7 +251,7 @@ export function getSearchTerm(task: DailyTask | null = getActiveDailyTaskForSear
         while (attempts < store.iframeSearchTerms.length) {
             const index = Math.floor(Math.random() * store.iframeSearchTerms.length);
             const candidate = store.iframeSearchTerms[index];
-            if (!store.usedSearchTerms.includes(candidate)) {
+            if (!hasUsedSearchTerm(candidate)) {
                 term = candidate;
                 console.log(`使用侧边栏词汇: ${term}`);
                 break;
@@ -265,7 +265,7 @@ export function getSearchTerm(task: DailyTask | null = getActiveDailyTaskForSear
         while (attempts < store.mainPageSearchTerms.length) {
             const index = Math.floor(Math.random() * store.mainPageSearchTerms.length);
             const candidate = store.mainPageSearchTerms[index];
-            if (!store.usedSearchTerms.includes(candidate)) {
+            if (!hasUsedSearchTerm(candidate)) {
                 term = candidate;
                 console.log(`使用主页面词汇: ${term}`);
                 break;
@@ -279,7 +279,7 @@ export function getSearchTerm(task: DailyTask | null = getActiveDailyTaskForSear
         while (attempts < store.dynamicSearchTerms.length) {
             const index = Math.floor(Math.random() * store.dynamicSearchTerms.length);
             const candidate = store.dynamicSearchTerms[index];
-            if (!store.usedSearchTerms.includes(candidate)) {
+            if (!hasUsedSearchTerm(candidate)) {
                 term = candidate;
                 store.dynamicSearchTerms.splice(index, 1);
                 console.log(`使用动态词库词汇: ${term}`);
@@ -294,7 +294,7 @@ export function getSearchTerm(task: DailyTask | null = getActiveDailyTaskForSear
         while (attempts < 50) {
             const index = Math.floor(Math.random() * store.fallbackSearchTerms.length);
             const candidate = store.fallbackSearchTerms[index];
-            if (!store.usedSearchTerms.includes(candidate)) {
+            if (!hasUsedSearchTerm(candidate)) {
                 term = candidate;
                 console.log(`使用后备词汇: ${term}`);
                 break;
@@ -308,9 +308,7 @@ export function getSearchTerm(task: DailyTask | null = getActiveDailyTaskForSear
         console.log(`使用随机生成词汇: ${term}`);
     }
 
-    if (!store.usedSearchTerms.includes(term)) {
-        store.usedSearchTerms.push(term);
-    }
+    rememberSearchTerm(term);
     return term;
 }
 
@@ -600,7 +598,7 @@ export async function startAutomatedSearch() {
     store.searchState.needRest = false;
     store.searchState.panelFailureCount = 0;
     store.currentProgress.noProgressCount = 0;
-    store.usedSearchTerms = [];
+    store.usedSearchTerms = loadDailySearchHistory();
     
     setSearchButtonState('searching');
     updateStatus(t('status', 'autoStarted'));
