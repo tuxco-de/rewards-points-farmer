@@ -39,12 +39,12 @@ describe('Bing navigation', () => {
         expect(result.searchParams.get('form')).toBe('QBRE');
         expect(result.searchParams.get('sp')).toBe('-1');
         expect(result.searchParams.get('lq')).toBe('0');
-        expect(result.searchParams.get('pq')).toBe('spacex');
+        expect(result.searchParams.get('pq')).toBe('');
+        expect(result.searchParams.get('sc')).toBe('0-0');
         expect(result.searchParams.get('sk')).toBe('');
         expect(result.searchParams.get('mkt')).toBe('en-US');
         expect(result.searchParams.get('cvid')).toMatch(/^[A-F0-9]{32}$/);
         expect(result.searchParams.has('ghc')).toBe(false);
-        expect(result.searchParams.has('sc')).toBe(false);
     });
 
     test('keeps task navigation on the active search origin', () => {

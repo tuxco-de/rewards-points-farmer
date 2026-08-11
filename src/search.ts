@@ -5,14 +5,19 @@ import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarA
 import { getDataFromPanel, getSearchTermsFromMainDoc, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
 import { t } from './i18n';
 import { isDedicatedWorkerContext } from './worker';
-import { buildBingSearchUrl, normalizeBingTaskUrl } from './navigation';
+import { buildBingSearchUrl, isBingHost, normalizeBingTaskUrl } from './navigation';
 
 let activeCountdownResolve: (() => void) | null = null;
 const RESULT_CLICK_SESSION_PREFIX = 'rewards_helper_result_click:';
 const RESULT_PREVIEW_TARGET = '_blank';
 export const SEARCH_RESULT_CLICK_PROBABILITY = 0.5;
 export const TOP_SEARCH_RESULT_LIMIT = 3;
+export const SEARCH_CREDIT_SETTLE_SECONDS = 8;
 const TOP_SEARCH_RESULT_WEIGHTS = [0.5, 0.3, 0.2];
+
+export function shouldUseFullPageSearchNavigation(hostname = window.location.hostname): boolean {
+    return isBingHost(hostname);
+}
 
 export function getTopOrganicSearchResults(root: ParentNode = document): HTMLAnchorElement[] {
     const links = Array.from(root.querySelectorAll<HTMLAnchorElement>([
@@ -399,6 +404,16 @@ export async function performSearch(task?: DailyTask | null): Promise<SearchExec
     
     const searchUrl = buildBingSearchUrl(searchTerm);
 
+    // Synthetic form events are not trusted browser input and can also race
+    // Bing's React search shell. A fresh Bing navigation produces one clean
+    // search request, avoids React error #152 and is the most reliable path for
+    // Rewards to observe and credit the query.
+    if (shouldUseFullPageSearchNavigation()) {
+        console.log('[RewardsHelper] 使用独立搜索页面提交，等待 Bing 记录本次积分');
+        window.location.assign(searchUrl);
+        return 'navigating';
+    }
+
     if (getRewardsFlyoutIframe()) {
         console.log('[RewardsHelper] Rewards 浮层仍处于打开状态，使用单次 URL 跳转避免 Bing React SPA 冲突');
         window.location.href = searchUrl;
@@ -434,8 +449,16 @@ export async function performSearch(task?: DailyTask | null): Promise<SearchExec
 export async function searchLoop() {
     if (!isDedicatedWorkerContext()) return;
     while (isDedicatedWorkerContext() && store.isSearching) {
-        if (store.searchState.totalSearchAttempts > 0) {
-            await maybeClickTopSearchResult();
+        const currentSearchQuery = new URLSearchParams(window.location.search).get('q') || '';
+        const hasPendingSearchCredit = getExecutionPhase() === 'points'
+            && store.searchState.totalSearchAttempts > 0
+            && Boolean(currentSearchQuery.trim());
+        const progressBeforePanel = store.currentProgress.lastChecked;
+        if (hasPendingSearchCredit) {
+            // Bing credits a search asynchronously. Opening the Rewards flyout or a
+            // result immediately after navigation can race that background update.
+            updateStatus(t('status', 'waitingProgress'));
+            await countdownAsync(SEARCH_CREDIT_SETTLE_SECONDS, 'waitingProgress');
             if (!store.isSearching) return;
         }
 
@@ -461,15 +484,26 @@ export async function searchLoop() {
                 await countdownAsync(retryInterval, 'waiting');
                 continue;
             }
-            
+
             const executionPhase = getExecutionPhase();
             let queuedTaskAction: 'clicked' | 'search' | 'skipped' | 'none' = 'none';
             if (executionPhase === 'cards' && store.searchState.dailyTasksQueue.length > 0) {
                 queuedTaskAction = await runQueuedDailyTaskFromOpenPanel();
             }
-            
+
             await closeRewardsSidebarAsync();
-            
+
+            // Only preview a result after Bing has had time to credit the search and
+            // the updated Rewards progress has been read. This keeps the optional
+            // click from interrupting the search that produced the current page.
+            const searchWasCredited = store.currentProgress.current > progressBeforePanel;
+            if (hasPendingSearchCredit && searchWasCredited && getExecutionPhase() === 'points') {
+                await maybeClickTopSearchResult();
+                if (!store.isSearching) return;
+            } else if (hasPendingSearchCredit && !searchWasCredited) {
+                console.log('[RewardsHelper] 当前搜索尚未记入积分，跳过结果点击并优先继续计分流程');
+            }
+
             if (queuedTaskAction === 'clicked') {
                 updateStatus(t('status', 'executingPanel'));
                 await countdownAsync(3, 'waiting');

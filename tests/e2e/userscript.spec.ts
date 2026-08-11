@@ -830,7 +830,6 @@ test('executes a search promotion with its first fixed term when the card query 
   await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
   await expect(page.locator('#rh-badge-text')).toHaveText('📋 0/2');
   await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');
-  await expect(page.locator('#rewid-f')).toHaveCount(1);
 
   await page.evaluate(() => (window as any).startRewardsTask());
 

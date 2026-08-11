@@ -59,7 +59,8 @@ export function buildBingSearchUrl(query: string, baseHref = window.location.hre
         form: 'QBRE',
         sp: '-1',
         lq: '0',
-        pq: normalizedQuery,
+        pq: '',
+        sc: '0-0',
         sk: '',
         cvid: createBingClientId()
     }, baseHref);

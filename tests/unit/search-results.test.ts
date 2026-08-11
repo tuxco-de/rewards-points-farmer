@@ -2,8 +2,10 @@ import {
     getTopOrganicSearchResults,
     maybeClickTopSearchResult,
     pickTopSearchResult,
+    SEARCH_CREDIT_SETTLE_SECONDS,
     SEARCH_RESULT_CLICK_PROBABILITY,
-    shouldClickSearchResult
+    shouldClickSearchResult,
+    shouldUseFullPageSearchNavigation
 } from '../../src/search';
 import { store } from '../../src/state';
 
@@ -38,8 +40,15 @@ describe('organic search result clicking', () => {
 
     test('uses a 50 percent trigger probability', () => {
         expect(SEARCH_RESULT_CLICK_PROBABILITY).toBe(0.5);
+        expect(SEARCH_CREDIT_SETTLE_SECONDS).toBeGreaterThanOrEqual(5);
         expect(shouldClickSearchResult(0.4999)).toBe(true);
         expect(shouldClickSearchResult(0.5)).toBe(false);
+    });
+
+    test('uses full-page navigation on Bing and keeps fixture form submission elsewhere', () => {
+        expect(shouldUseFullPageSearchNavigation('www.bing.com')).toBe(true);
+        expect(shouldUseFullPageSearchNavigation('cn.bing.com')).toBe(true);
+        expect(shouldUseFullPageSearchNavigation('localhost')).toBe(false);
     });
 
     test('weights selection toward the first three results', () => {
