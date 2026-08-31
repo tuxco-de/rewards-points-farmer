@@ -1,4 +1,3 @@
-import { buildClaimCheckUrl } from './claims';
 import { buildBingPageUrl } from './navigation';
 
 const WORKER_QUERY_PARAM = 'rewards_helper_worker';
@@ -139,7 +138,7 @@ function buildWorkerUrl(): string {
 
 export function requestDedicatedWorkerStart(): boolean {
     const workerUrl = buildWorkerUrl();
-    const workerWindow = window.open(buildClaimCheckUrl(workerUrl), WORKER_WINDOW_NAME);
+    const workerWindow = window.open(workerUrl, WORKER_WINDOW_NAME);
     if (!workerWindow) return false;
     publishWorkerCommand('start');
     return true;

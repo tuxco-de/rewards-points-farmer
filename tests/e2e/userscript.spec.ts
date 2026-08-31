@@ -259,18 +259,6 @@ test('does not open the Rewards sidebar or execute in a regular Bing tab', async
   expect(await page.evaluate(() => (window as any).__e2e_isLocalSearchRunning())).toBe(false);
 });
 
-test('claims explicit Dashboard point controls before creating the task UI', async ({ page }) => {
-  await page.context().addInitScript({ path: userscriptPath });
-  const url = new URL(fixtureUrl);
-  url.searchParams.set('rewards_helper_claim', '1');
-  url.searchParams.set('claimablePoints', '1');
-  await page.goto(url.toString());
-
-  await expect.poll(() => page.evaluate(() => document.body.dataset.claimedPoints || '0')).toBe('3');
-  expect(await page.evaluate(() => document.body.dataset.redeemClicked)).toBeUndefined();
-  await expect(page.locator('#rewards-helper-container')).toHaveCount(0);
-});
-
 test('opens one dedicated task tab and accepts stop commands from the controller', async ({ page, context }) => {
   await loadUserscriptFixture(page);
 
@@ -281,7 +269,7 @@ test('opens one dedicated task tab and accepts stop commands from the controller
   await worker.waitForFunction(() => typeof (window as any).__e2e_isDedicatedWorker === 'function');
 
   expect(new URL(worker.url()).searchParams.get('rewards_helper_worker')).toBe('1');
-  expect(new URL(worker.url()).searchParams.get('rewards_helper_claim_checked')).toBe('1');
+  expect(new URL(worker.url()).searchParams.get('rewards_helper_autostart')).toBe('1');
   expect(await worker.evaluate(() => (window as any).__e2e_isDedicatedWorker())).toBe(true);
   expect(await page.evaluate(() => (window as any).__e2e_isDedicatedWorker())).toBe(false);
   expect(await page.evaluate(() => (window as any).__e2e_isLocalSearchRunning())).toBe(false);

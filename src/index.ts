@@ -7,7 +7,6 @@ import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
 import { consumePendingWorkerCommand, initializeDedicatedWorkerContext, isDedicatedWorkerContext, listenForWorkerCommands, requestDedicatedWorkerStart, requestDedicatedWorkerStop } from './worker';
 import { checkForUpdates } from './update';
-import { collectClaimablePointsAndContinue, isClaimCheckContext } from './claims';
 
 declare const GM_registerMenuCommand: undefined | ((caption: string, onClick: () => void) => string | number);
 
@@ -185,12 +184,8 @@ window.addEventListener('beforeunload', () => {
 
 // skip running inside iframes (e.g. rewards sidebar)
 if (window === window.top) {
-    window.addEventListener('load', async function () {
+    window.addEventListener('load', function () {
         console.log('Rewards Points Farmer 已加载');
-        if (isClaimCheckContext()) {
-            await collectClaimablePointsAndContinue();
-            return;
-        }
         dedicatedWorker = initializeDedicatedWorkerContext();
         store.loadConfig();
         createUI({
