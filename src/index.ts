@@ -1,7 +1,7 @@
 import { store, STORAGE_KEY } from './state';
 import { createUI, updateStatus, setSearchButtonState, updateProgressUI, updateDailyTasksUI, showToast, openSettingsPanel } from './ui';
 import { openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent } from './dom';
-import { getDataFromPanel, getSearchTermsFromMainDoc } from './parser';
+import { getDataFromPanelAsync, getSearchTermsFromMainDoc, registerRewardsPanelBridge } from './parser';
 import { searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm, getExecutionPhase, type SearchExecutionResult } from './search';
 import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
@@ -133,7 +133,7 @@ async function collectRewardsDataInWorker() {
     let panelParsed = false;
     if (await openRewardsSidebarAsync()) {
         await waitForIframeContent(10000);
-        panelParsed = getDataFromPanel();
+        panelParsed = await getDataFromPanelAsync();
         getSearchTermsFromMainDoc();
         await closeRewardsSidebarAsync();
     } else {
@@ -182,8 +182,12 @@ window.addEventListener('beforeunload', () => {
     }
 });
 
-// skip running inside iframes (e.g. rewards sidebar)
-if (window === window.top) {
+if (window !== window.top) {
+    // The redesigned Rewards flyout is hosted on rewards.bing.com. Its own
+    // userscript instance parses and operates the cross-origin iframe, while
+    // the top-level Bing instance remains the sole owner of UI and state.
+    registerRewardsPanelBridge();
+} else {
     window.addEventListener('load', function () {
         console.log('Rewards Points Farmer 已加载');
         dedicatedWorker = initializeDedicatedWorkerContext();
@@ -201,6 +205,7 @@ if (window === window.top) {
         window.__e2e_getExecutionPhase = getExecutionPhase;
         window.__e2e_getCurrentProgress = () => ({ ...store.currentProgress });
         window.__e2e_getParsedSnapshot = () => ({
+            panelParsed: store.searchState.panelParsed,
             currentProgress: { ...store.currentProgress },
             dailyTasksData: store.dailyTasksData.map(task => ({ ...task })),
             dailyTasksQueue: store.searchState.dailyTasksQueue.map(task => ({

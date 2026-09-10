@@ -21,7 +21,7 @@ const visibleRewardsEntrySelector = rewardsEntrySelector
   .split(',')
   .map(selector => `${selector.trim()}:not(#rh-badge):visible`)
   .join(', ');
-const rewardsFlyoutSelector = 'iframe[src*="/rewards/panelflyout"], #rewid-f iframe, iframe[title*="Microsoft Rewards" i], iframe#b_rwFlyout, iframe.b_rwFlyout';
+const rewardsFlyoutSelector = 'iframe[src*="rewards.bing.com/flyout"], iframe[src*="/rewards/panelflyout"], #rewid-f iframe, iframe[title*="Microsoft Rewards" i], iframe#b_rwFlyout, iframe.b_rwFlyout';
 
 test.use({
   screenshot: 'off',
@@ -176,6 +176,10 @@ test.describe('live Bing smoke @live', () => {
     await page.locator('#rh-badge').click();
     await expect(page.locator('#rh-dropdown')).toBeVisible();
     await expect(page.locator('#rh-tasks-list')).not.toContainText(/Fetching tasks|正在获取任务/);
+    await expect.poll(
+      () => page.evaluate(() => Boolean((window as any).__e2e_getParsedSnapshot?.().panelParsed)),
+      { timeout: 20_000 }
+    ).toBe(true);
     const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
     expect(queue.flatMap((task: { searchTerms: string[] }) => task.searchTerms)).toEqual(
       expect.not.arrayContaining([expect.stringMatching(/(?:^[a-z][a-z0-9+.-]*:|^\/|bing\.com)/i)])

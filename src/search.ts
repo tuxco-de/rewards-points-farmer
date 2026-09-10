@@ -2,7 +2,7 @@ import { config } from './config';
 import { DailyTask, getDailyTaskSearchTerm, hasUsedSearchTerm, loadDailySearchHistory, markDailyTaskSkipped, MAX_DAILY_TASK_ATTEMPTS, MAX_PANEL_FAILURES, MAX_REST_CYCLES, MAX_TOTAL_SEARCH_ATTEMPTS, recordDailyTaskAttempt, rememberSearchTerm, store, sleep, getRandomInterval } from './state';
 import { updateStatus, updateCountdown, showCompletionNotification, setSearchButtonState, updateDailyTasksUI, updateProgressUI } from './ui';
 import { simulateMouseInteraction, openRewardsSidebarAsync, closeRewardsSidebarAsync, getRewardsFlyoutIframe, waitForIframeContent, simulateTypingAndSearch, SEARCH_RESULT_SELECTOR } from './dom';
-import { getDataFromPanel, getSearchTermsFromMainDoc, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
+import { getDataFromPanelAsync, getSearchTermsFromMainDoc, fetchOrganicSearchTerms, clickTaskCardAsync } from './parser';
 import { t } from './i18n';
 import { isDedicatedWorkerContext } from './worker';
 import { buildBingSearchUrl, isBingHost, normalizeBingTaskUrl } from './navigation';
@@ -465,7 +465,7 @@ export async function searchLoop() {
         
         if (await openRewardsSidebarAsync()) {
             await waitForIframeContent(10000);
-            const panelParsed = getDataFromPanel();
+            const panelParsed = await getDataFromPanelAsync();
             getSearchTermsFromMainDoc();
 
             if (!panelParsed || !store.searchState.panelParsed) {

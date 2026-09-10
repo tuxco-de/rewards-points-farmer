@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Microsoft Rewards</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; }
+      #shell { min-height: 360px; padding: 16px; }
+      #moreactivities { display: grid; gap: 12px; }
+      #moreactivities a { border: 1px solid #ddd; color: inherit; display: block; padding: 12px; text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    <main id="shell" class="pg-content min-h-screen">
+      <header>
+        <h1>Microsoft Rewards</h1>
+        <button type="button" aria-label="Close">Close</button>
+      </header>
+
+      <section aria-label="PC search">
+        <h2>PC search</h2>
+        <div role="progressbar" aria-label="PC search progress" aria-valuemin="0" aria-valuenow="25" aria-valuemax="200"></div>
+      </section>
+
+      <section id="moreactivities">
+        <h2>More activities</h2>
+        <a href="https://www.bing.com/search?q=weekend+getaway">
+          <div class="rounded-cornerCardDefault">
+            <p class="line-clamp-3 text-globalBody2Strong">Plan a weekend getaway</p>
+            <p class="line-clamp-3 text-fgCtrlNeutralSecondaryRest">Search Bing for weekend getaway ideas</p>
+            <footer><span>10 points</span></footer>
+          </div>
+        </a>
+        <a href="https://www.bing.com/search?q=nasa+artemis">
+          <div class="rounded-cornerCardDefault">
+            <p class="line-clamp-3 text-globalBody2Strong">NASA Artemis mission</p>
+            <p class="line-clamp-3 text-fgCtrlNeutralSecondaryRest">Search Bing for NASA Artemis mission</p>
+            <footer><span aria-label="Completed">Completed</span><span>10 points</span></footer>
+          </div>
+        </a>
+      </section>
+    </main>
+
+    <script>
+      if (new URLSearchParams(window.location.search).get('pointsComplete') === '1') {
+        document.querySelector('[role="progressbar"]').setAttribute('aria-valuenow', '200');
+      }
+      document.querySelector('button[aria-label="Close"]').addEventListener('click', () => {
+        window.parent.postMessage({ fixtureAction: 'close' }, 'https://www.bing.com');
+      });
+      document.querySelectorAll('#moreactivities a').forEach(link => {
+        link.addEventListener('click', event => {
+          event.preventDefault();
+          window.parent.postMessage({
+            fixtureAction: 'card-click',
+            href: link.getAttribute('href')
+          }, 'https://www.bing.com');
+        });
+      });
+    </script>
+  </body>
+</html>

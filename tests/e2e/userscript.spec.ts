@@ -1,8 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
+import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const fixtureUrl = pathToFileURL(path.resolve(__dirname, 'fixtures/bing-shell.html')).href;
+const fixturePath = path.resolve(__dirname, 'fixtures/bing-shell.html');
+const vNextFlyoutFixturePath = path.resolve(__dirname, 'fixtures/rewards-vnext-flyout.html');
 const userscriptPath = path.resolve(__dirname, '../../dist/rewards-points-farmer.user.js');
 
 type SavedState = {
@@ -33,7 +36,7 @@ type SavedState = {
 async function loadUserscriptFixture(
   page: Page,
   savedState?: SavedState,
-  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; rejectMouseEventView?: boolean; wrappedInputValue?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean; unconfiguredPromotion?: boolean; unconfiguredEnglishPromotion?: boolean; currentRewardsCards?: boolean; spaSearch?: boolean } = {}
+  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; vNextLayout?: boolean; rejectMouseEventView?: boolean; wrappedInputValue?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean; unconfiguredPromotion?: boolean; unconfiguredEnglishPromotion?: boolean; currentRewardsCards?: boolean; spaSearch?: boolean } = {}
 ) {
   if (savedState) {
     await page.context().addInitScript(state => {
@@ -101,10 +104,24 @@ async function loadUserscriptFixture(
   }
 
   await page.context().addInitScript({ path: userscriptPath });
-  const url = new URL(fixtureUrl);
+  if (options.vNextLayout) {
+    await page.route('https://www.bing.com/**', route => route.fulfill({
+      contentType: 'text/html',
+      body: fs.readFileSync(fixturePath, 'utf8'),
+    }));
+    await page.route('https://rewards.bing.com/flyout**', route => route.fulfill({
+      contentType: 'text/html',
+      body: fs.readFileSync(vNextFlyoutFixturePath, 'utf8'),
+    }));
+  }
+
+  const url = new URL(options.vNextLayout
+    ? 'https://www.bing.com/__rewards-helper-fixture__'
+    : fixtureUrl);
   if (options.worker) url.searchParams.set('rewards_helper_worker', '1');
   if (options.pointsComplete) url.searchParams.set('pointsComplete', '1');
   if (options.modernLayout) url.searchParams.set('modernLayout', '1');
+  if (options.vNextLayout) url.searchParams.set('vNextLayout', '1');
   if (options.englishSummary) url.searchParams.set('englishSummary', '1');
   if (options.completedChineseSummary) url.searchParams.set('completedChineseSummary', '1');
   if (options.hundredTotal) url.searchParams.set('hundredTotal', '1');
@@ -396,6 +413,59 @@ test('parses the redesigned Rewards entry, progress and promo cards', async ({ p
   );
   expect(await page.evaluate(() => document.body.dataset.rewardsToggleCount)).toBe('1');
   expect(await page.evaluate(() => document.body.dataset.javascriptNavigation)).toBeUndefined();
+});
+
+test('parses and closes the cross-origin vNext Rewards side panel', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, {
+    worker: true,
+    modernLayout: true,
+    vNextLayout: true,
+  });
+
+  await expect(page.locator('#rh-progress-text')).toHaveText('25/200', { timeout: 8_000 });
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(1/2)');
+  await expect(page.locator('#rh-tasks-list')).toContainText('Plan a weekend getaway');
+  await expect(page.locator('#rh-tasks-list')).toContainText('NASA Artemis mission');
+
+  const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
+  expect(queue).toHaveLength(1);
+  expect(queue[0]).toMatchObject({
+    title: 'Plan a weekend getaway',
+    kind: 'search-promotion',
+    points: 10,
+    source: 'card',
+  });
+  expect(queue[0].searchTerms).not.toEqual(
+    expect.arrayContaining([expect.stringMatching(/(?:https?:\/\/|bing\.com|^\/search)/i)])
+  );
+  await expect.poll(() => page.evaluate(() => document.body.dataset.flyoutCloseCount)).toBe('1');
+  await expect(page.locator('#rewid-f')).toHaveCount(0);
+  await expect(page.locator('#id_rh_w')).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('clicks a vNext activity through the cross-origin Rewards bridge', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, {
+    worker: true,
+    modernLayout: true,
+    vNextLayout: true,
+    pointsComplete: true,
+  });
+
+  await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 8_000 });
+  await page.evaluate(() => (window as any).startRewardsTask());
+  try {
+    await expect.poll(
+      () => page.evaluate(() => Number(document.body.dataset.cardClickCount || 0)),
+      { timeout: 8_000 }
+    ).toBe(1);
+    const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
+    expect(queue[0]).toMatchObject({
+      title: 'Plan a weekend getaway',
+      attempts: 1,
+    });
+  } finally {
+    await page.evaluate(() => (window as any).stopRewardsTask());
+  }
 });
 
 test('keeps all current Rewards cards when browse activities share one URL', async ({ page }) => {

@@ -2,7 +2,8 @@ import { config } from './config';
 import { DailyTask, DailyTaskDisplayItem, getDailyTaskKey, isUrlLikeSearchCandidate, normalizeCandidateText, removeDailyTask, store, upsertDailyTask } from './state';
 import { updateDailyTasksUI, updateProgressUI } from './ui';
 import { t } from './i18n';
-import { getRewardsFlyoutIframe } from './dom';
+import { getAccessibleRewardsFlyoutDocument, getRewardsFlyoutIframe } from './dom';
+import { registerRewardsPanelFrameBridge, requestRewardsPanelFrame } from './rewards-bridge';
 import searchPromotionTerms from '../config/search-promotion-terms.json';
 import { isBingHost, normalizeBingTaskUrl } from './navigation';
 
@@ -11,6 +12,19 @@ interface EarnedProgress {
     total: number;
     completed: boolean;
     rule: string;
+}
+
+export interface RewardsPanelSnapshot {
+    parsed: boolean;
+    panelParsed: boolean;
+    currentProgress: {
+        current: number;
+        total: number;
+        completed: boolean;
+    } | null;
+    dailyTasksData: DailyTaskDisplayItem[];
+    dailyTasksQueue: DailyTask[];
+    iframeSearchTerms: string[];
 }
 
 export function parseEarnedProgressText(value: string): EarnedProgress | null {
@@ -44,6 +58,11 @@ export function parseEarnedProgressText(value: string): EarnedProgress | null {
         {
             rule: 'generic_fraction_zh',
             match: /(?:搜索|pc).{0,50}?(\d+)\s*(?:\/|of|个，共)\s*(\d+)\s*(?:积分|分|个)?/i,
+            minTotal: 12
+        },
+        {
+            rule: 'generic_fraction_reverse',
+            match: /(\d+)\s*(?:\/|of)\s*(\d+)\s*(?:pts|points|积分).{0,60}?(?:pc|daily)?\s*(?:search|搜索)/i,
             minTotal: 12
         }
     ];
@@ -158,7 +177,18 @@ export function getSearchTermsFromMainDoc() {
 function discoverCards(doc: Document): Set<Element> {
     const cardsArray = new Set<Element>();
     
-    doc.querySelectorAll('#exb-activityChecklist .promo_cont, div[aria-label*="Offer" i], [data-task-id], [data-offer-id], .promo_cont, .rw-card, .explore-card, .task-card').forEach(el => cardsArray.add(el));
+    doc.querySelectorAll([
+        '#exb-activityChecklist .promo_cont',
+        '#moreactivities a[href]',
+        'section[id*="activit" i] a[href]',
+        'div[aria-label*="Offer" i]',
+        '[data-task-id]',
+        '[data-offer-id]',
+        '.promo_cont',
+        '.rw-card',
+        '.explore-card',
+        '.task-card'
+    ].join(', ')).forEach(el => cardsArray.add(el));
     
     try {
         const textNodes = doc.createTreeWalker(doc.body || doc, NodeFilter.SHOW_TEXT);
@@ -191,9 +221,10 @@ export function isRewardsTaskCard(card: Element): boolean {
     }
 
     const isChecklistTask = Boolean(card.closest('#exb-activityChecklist'));
+    const isVNextActivity = Boolean(card.closest('#moreactivities, section[id*="activit" i]'));
     const hasTrustedTaskShape = isChecklistTask || card.matches(
         '#exclusive_promo_cont, [data-task-id], .promo_cont.slim, .rw-card, .explore-card, .task-card'
-    );
+    ) || isVNextActivity;
 
     const normalizedHref = href.toLowerCase();
     const isRelativeBingPath = normalizedHref.startsWith('/') && !normalizedHref.startsWith('//');
@@ -571,7 +602,7 @@ function getCardDisplayName(card: Element, idx: number): string {
     }
 
     if (!name) {
-        const titleElem = card.querySelector('h3, h4, .title, .rw-card-title, .promo-title, .promo_title, .card-title, [class*="promo-title"], div[class*="title"], img[alt]');
+        const titleElem = card.querySelector('h3, h4, .title, .rw-card-title, .promo-title, .promo_title, .card-title, [class*="promo-title"], [class*="Body2Strong"], div[class*="title"], img[alt]');
         if (titleElem && titleElem.tagName.toLowerCase() === 'img') {
             name = titleElem.getAttribute('alt') || '';
         } else if (titleElem && titleElem.textContent?.trim()) {
@@ -662,8 +693,11 @@ function addIframeSearchTerms(items: any[]): number {
     return terms.length;
 }
 
+let lastParsedPanelProgress: RewardsPanelSnapshot['currentProgress'] = null;
+
 export function getDataFromPanel() {
     store.searchState.panelParsed = false;
+    lastParsedPanelProgress = null;
     let targetDoc = document;
     let isIframe = false;
     let iframeWin: (Window & Record<string, any>) | null = window;
@@ -671,7 +705,7 @@ export function getDataFromPanel() {
     const iframe = getRewardsFlyoutIframe();
     if (iframe) {
         try {
-            const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+            const iframeDoc = getAccessibleRewardsFlyoutDocument(iframe);
             if (iframeDoc && (iframeDoc.readyState === 'complete' || iframeDoc.readyState === 'interactive')) {
                 targetDoc = iframeDoc;
                 isIframe = true;
@@ -752,7 +786,7 @@ export function getDataFromPanel() {
         for (let el of Array.from(allElements)) {
             const txt = (el.textContent || '').trim();
             if (txt.length > 0 && txt.length < 50) {
-                const matches = txt.match(/(\d+)\s*\/\s*(\d+)/);
+                const matches = txt.match(/(\d+)\s*(?:\/|of|个，共)\s*(\d+)/i);
                 if (matches) {
                     const cur = parseInt(matches[1], 10);
                     const max = parseInt(matches[2], 10);
@@ -779,6 +813,26 @@ export function getDataFromPanel() {
                 }
             }
         }
+
+        targetDoc.querySelectorAll('[role="progressbar"][aria-valuenow][aria-valuemax]').forEach(element => {
+            const current = Number(element.getAttribute('aria-valuenow'));
+            const max = Number(element.getAttribute('aria-valuemax'));
+            if (!Number.isFinite(current) || !Number.isFinite(max) || max < 12 || max > 1000) return;
+
+            let context = element.parentElement;
+            let contextText = element.getAttribute('aria-label') || '';
+            for (let depth = 0; context && depth < 4; depth++) {
+                contextText += ` ${context.textContent || ''}`;
+                context = context.parentElement;
+            }
+            const normalizedContext = contextText.toLowerCase();
+            if (/\b(?:browse|read)\b|浏览|阅读/.test(normalizedContext)) return;
+            potentialProgresses.push({
+                current,
+                max,
+                isSearch: /\b(?:search|pc)\b|搜索/.test(normalizedContext)
+            });
+        });
 
         if (potentialProgresses.length > 0) {
             let best = null;
@@ -836,6 +890,12 @@ export function getDataFromPanel() {
                 store.searchState.needRest = false;
                 console.log(`进度数字表明任务已完成: ${current}/${store.currentProgress.total}`);
             }
+
+            lastParsedPanelProgress = {
+                current: store.currentProgress.current,
+                total: store.currentProgress.total,
+                completed: store.currentProgress.completed
+            };
 
             updateProgressUI();
 
@@ -938,6 +998,120 @@ export function getDataFromPanel() {
     }
 }
 
+function createRewardsPanelSnapshot(parsed: boolean): RewardsPanelSnapshot {
+    return {
+        parsed,
+        panelParsed: store.searchState.panelParsed,
+        currentProgress: lastParsedPanelProgress ? { ...lastParsedPanelProgress } : null,
+        dailyTasksData: store.dailyTasksData.map(task => ({ ...task })),
+        dailyTasksQueue: store.searchState.dailyTasksQueue.map(task => ({
+            ...task,
+            searchTerms: [...task.searchTerms]
+        })),
+        iframeSearchTerms: [...store.iframeSearchTerms]
+    };
+}
+
+function applyRemoteRewardsProgress(progress: NonNullable<RewardsPanelSnapshot['currentProgress']>) {
+    const current = progress.current;
+    const total = progress.total;
+    if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return;
+
+    store.currentProgress.total = total;
+    const hasAttemptedSearch = store.searchState.totalSearchAttempts > 0;
+    if (
+        hasAttemptedSearch &&
+        !progress.completed &&
+        current <= store.currentProgress.lastChecked &&
+        store.isSearching
+    ) {
+        store.currentProgress.noProgressCount++;
+        if (store.currentProgress.noProgressCount >= config.maxNoProgressCount) {
+            store.searchState.needRest = true;
+        }
+    } else if (current > store.currentProgress.lastChecked) {
+        store.currentProgress.noProgressCount = 0;
+        store.searchState.restCycles = 0;
+    }
+
+    store.currentProgress.current = current;
+    store.currentProgress.lastChecked = current;
+    store.currentProgress.completed = Boolean(progress.completed || current >= total);
+    if (store.currentProgress.completed) {
+        store.currentProgress.noProgressCount = 0;
+        store.searchState.needRest = false;
+    }
+    updateProgressUI();
+}
+
+function applyRewardsPanelSnapshot(snapshot: RewardsPanelSnapshot): boolean {
+    if (!snapshot || typeof snapshot !== 'object') return false;
+
+    const incomingTasks = Array.isArray(snapshot.dailyTasksQueue)
+        ? snapshot.dailyTasksQueue.filter(task => task && typeof task.url === 'string' && typeof task.title === 'string')
+        : [];
+    const incomingKeys = new Set(incomingTasks.map(getDailyTaskKey));
+    store.searchState.dailyTasksQueue = store.searchState.dailyTasksQueue.filter(task =>
+        task.source !== 'card' || incomingKeys.has(getDailyTaskKey(task))
+    );
+    incomingTasks.forEach(task => upsertDailyTask(task));
+
+    store.dailyTasksData = Array.isArray(snapshot.dailyTasksData)
+        ? snapshot.dailyTasksData.map(task => ({ ...task }))
+        : [];
+    updateDailyTasksUI(store.dailyTasksData);
+
+    store.iframeSearchTerms = getUniqueTaskCandidates([
+        ...store.iframeSearchTerms,
+        ...(Array.isArray(snapshot.iframeSearchTerms) ? snapshot.iframeSearchTerms : [])
+    ]);
+
+    if (snapshot.currentProgress) applyRemoteRewardsProgress(snapshot.currentProgress);
+    store.searchState.panelParsed = Boolean(snapshot.panelParsed);
+    if (store.searchState.panelParsed) store.searchState.panelFailureCount = 0;
+    if (store.isSearching) store.saveState();
+    return Boolean(snapshot.parsed);
+}
+
+export async function getDataFromPanelAsync(): Promise<boolean> {
+    const iframe = getRewardsFlyoutIframe();
+    if (!iframe || getAccessibleRewardsFlyoutDocument(iframe)) {
+        return getDataFromPanel();
+    }
+
+    const snapshot = await requestRewardsPanelFrame<RewardsPanelSnapshot>(iframe, 'parse', undefined, 4000);
+    if (!snapshot) {
+        console.log('[RewardsHelper] 跨域 Rewards 面板没有返回可解析数据');
+        store.searchState.panelParsed = false;
+        return false;
+    }
+    console.log('[RewardsHelper] 已从跨域 Rewards 面板接收解析结果');
+    return applyRewardsPanelSnapshot(snapshot);
+}
+
+export function registerRewardsPanelBridge() {
+    registerRewardsPanelFrameBridge<RewardsPanelSnapshot>({
+        ready: () => {
+            const bodyText = (document.body?.innerText || '').trim();
+            return bodyText.length >= 30 && Boolean(document.querySelector(
+                '#shell, #app, #bingRewards, #moreactivities, main, [aria-label*="Rewards" i]'
+            ));
+        },
+        parse: () => createRewardsPanelSnapshot(getDataFromPanel()),
+        clickTask: task => clickTaskCardInDocument(task, document),
+        close: () => {
+            const closeButton = document.querySelector([
+                'button[aria-label="Close" i]',
+                'button[aria-label*="关闭"]',
+                'button[title="Close" i]',
+                'button[title*="关闭"]',
+                '[data-testid*="close" i]'
+            ].join(', ')) as HTMLElement | null;
+            closeButton?.click();
+        }
+    });
+}
+
 function hrefMatchesTask(href: string | null, taskUrl: string): boolean {
     if (!href || !taskUrl) return false;
     if (href === taskUrl) return true;
@@ -950,16 +1124,10 @@ function hrefMatchesTask(href: string | null, taskUrl: string): boolean {
     }
 }
 
-export async function clickTaskCardAsync(task: DailyTask): Promise<boolean> {
+async function clickTaskCardInDocument(task: DailyTask, targetDoc: Document): Promise<boolean> {
     try {
         const url = task.url;
-        const iframe = getRewardsFlyoutIframe();
-        if (!iframe) return false;
-        
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (!iframeDoc) return false;
-
-        const matchingLinks = Array.from(iframeDoc.querySelectorAll('a'))
+        const matchingLinks = Array.from(targetDoc.querySelectorAll('a'))
             .filter(a => hrefMatchesTask(a.getAttribute('href'), url));
         const normalizedTaskTitle = cleanupTaskText(task.title).toLowerCase();
         const linkElem = matchingLinks.find(link => {
@@ -980,8 +1148,8 @@ export async function clickTaskCardAsync(task: DailyTask): Promise<boolean> {
                 const eventOptions = { bubbles: true, cancelable: true, clientX: targetX, clientY: targetY };
 
                 let clickTarget: Element = targetElem;
-                if (iframeDoc.elementFromPoint) {
-                    const elAtPoint = iframeDoc.elementFromPoint(targetX, targetY);
+                if (targetDoc.elementFromPoint) {
+                    const elAtPoint = targetDoc.elementFromPoint(targetX, targetY);
                     if (elAtPoint && targetElem.contains(elAtPoint)) {
                         clickTarget = elAtPoint;
                     }
@@ -1007,4 +1175,14 @@ export async function clickTaskCardAsync(task: DailyTask): Promise<boolean> {
         console.warn('[RewardsHelper] 模拟点击卡片时出错:', e);
     }
     return false;
+}
+
+export async function clickTaskCardAsync(task: DailyTask): Promise<boolean> {
+    const iframe = getRewardsFlyoutIframe();
+    if (!iframe) return false;
+
+    const iframeDoc = getAccessibleRewardsFlyoutDocument(iframe);
+    if (iframeDoc) return clickTaskCardInDocument(task, iframeDoc);
+
+    return Boolean(await requestRewardsPanelFrame<boolean>(iframe, 'click-task', task, 4000));
 }

@@ -1,4 +1,5 @@
 import { sleep } from './state';
+import { requestRewardsPanelFrame } from './rewards-bridge';
 
 export const REWARDS_ENTRY_SELECTOR = [
     '#id_rh_w',
@@ -11,6 +12,7 @@ export const REWARDS_ENTRY_SELECTOR = [
 ].join(', ');
 
 export const REWARDS_FLYOUT_SELECTOR = [
+    'iframe[src*="rewards.bing.com/flyout"]',
     'iframe[src*="/rewards/panelflyout"]',
     '#rewid-f iframe',
     'iframe[title*="Microsoft Rewards" i]',
@@ -55,6 +57,29 @@ export function findVisibleElement(selector: string, context: Document | Element
 export function getRewardsFlyoutIframe(): HTMLIFrameElement | null {
     const frames = Array.from(document.querySelectorAll(REWARDS_FLYOUT_SELECTOR)) as HTMLIFrameElement[];
     return frames.find(el => isElementVisible(el)) || frames[0] || null;
+}
+
+export function getAccessibleRewardsFlyoutDocument(iframe: HTMLIFrameElement): Document | null {
+    try {
+        return iframe.contentDocument || iframe.contentWindow?.document || null;
+    } catch {
+        return null;
+    }
+}
+
+function hasMeaningfulRewardsContent(doc: Document): boolean {
+    const bodyText = (doc.body?.innerText || '').trim();
+    const rewardsRoot = doc.querySelector([
+        '#shell',
+        '#app',
+        '#bingRewards',
+        '#moreactivities',
+        '.promo_cont',
+        '.rw-card',
+        '.search_earn_card',
+        '[aria-label*="Rewards" i]'
+    ].join(', '));
+    return bodyText.length >= 30 && Boolean(rewardsRoot);
 }
 
 export async function waitForElement(selector: string, timeout = 5000, context: Document | Element = document): Promise<Element | null> {
@@ -124,7 +149,7 @@ export async function closeRewardsSidebarAsync() {
             const isReactFlyout = Boolean(iframe.closest('#rewid-f')) ||
                 iframe.src.includes('/rewards/panelflyout');
             if (isReactFlyout) {
-                const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+                const iframeDoc = getAccessibleRewardsFlyoutDocument(iframe);
                 const closeSelectors = [
                     'button[aria-label="Close" i]',
                     'button[aria-label*="关闭"]',
@@ -150,8 +175,24 @@ export async function closeRewardsSidebarAsync() {
                         }
                     }
                     console.warn('[RewardsHelper] Rewards 浮层关闭按钮未生效，将避免 SPA 表单提交');
+                } else if (await requestRewardsPanelFrame<boolean>(iframe, 'close', undefined, 1500)) {
+                    for (let attempt = 0; attempt < 8; attempt++) {
+                        await sleep(200);
+                        const currentFrame = getRewardsFlyoutIframe();
+                        if (!currentFrame || !isElementVisible(currentFrame)) {
+                            console.log('[RewardsHelper] 已通过跨域浮层关闭按钮关闭 Rewards 面板');
+                            return;
+                        }
+                    }
+                }
+
+                const pointsContainer = findVisibleElement(REWARDS_ENTRY_SELECTOR);
+                if (pointsContainer) {
+                    clickRewardsEntry(pointsContainer);
+                    console.log('[RewardsHelper] 已通过积分按钮关闭 Rewards 面板');
+                    await sleep(1000);
                 } else {
-                    console.log('[RewardsHelper] Rewards 浮层没有可用的关闭按钮，将避免 SPA 表单提交');
+                    console.log('[RewardsHelper] Rewards 浮层没有可用的关闭入口');
                 }
                 return;
             }
@@ -196,18 +237,19 @@ export async function waitForIframeContent(timeout = 10000): Promise<HTMLIFrameE
         const iframe = getRewardsFlyoutIframe();
 
         if (iframe) {
-            try {
-                const doc = iframe.contentDocument || iframe.contentWindow?.document;
-                if (doc && (doc.readyState === 'complete' || doc.readyState === 'interactive')) {
-                    const bodyText = (doc.body?.innerText || '').trim();
-                    const rewardsRoot = doc.querySelector('#app, #bingRewards, .promo_cont, .rw-card, .search_earn_card, [aria-label*="Rewards" i]');
-                    if (bodyText.length >= MIN_CONTENT_LENGTH && rewardsRoot) {
-                        console.log(`[RewardsHelper] iframe 内容就绪 (${bodyText.length} 字符, 耗时 ${Date.now() - startTime}ms)`);
-                        return iframe;
-                    }
+            const doc = getAccessibleRewardsFlyoutDocument(iframe);
+            if (doc && (doc.readyState === 'complete' || doc.readyState === 'interactive')) {
+                const bodyText = (doc.body?.innerText || '').trim();
+                if (bodyText.length >= MIN_CONTENT_LENGTH && hasMeaningfulRewardsContent(doc)) {
+                    console.log(`[RewardsHelper] iframe 内容就绪 (${bodyText.length} 字符, 耗时 ${Date.now() - startTime}ms)`);
+                    return iframe;
                 }
-            } catch (e) {
-                // Cross-origin or not ready yet, keep polling
+            } else {
+                const ready = await requestRewardsPanelFrame<boolean>(iframe, 'ready', undefined, 750);
+                if (ready) {
+                    console.log(`[RewardsHelper] 跨域 Rewards iframe 内容就绪 (耗时 ${Date.now() - startTime}ms)`);
+                    return iframe;
+                }
             }
         }
 
