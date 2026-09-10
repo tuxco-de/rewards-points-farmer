@@ -1,4 +1,4 @@
-import { countdownAsync, getExecutionPhase } from '../../src/search';
+import { countdownAsync, getExecutionPhase, SEARCH_CREDIT_SETTLE_SECONDS } from '../../src/search';
 import { getDailyTaskKey, markDailyTaskSkipped, store, upsertDailyTask, type DailyTask } from '../../src/state';
 
 describe('task execution state machine', () => {
@@ -9,6 +9,10 @@ describe('task execution state machine', () => {
     afterEach(() => {
         jest.useRealTimers();
         store.resetRuntimeState();
+    });
+
+    test('allows Bing enough time to settle search credit before checking progress', () => {
+        expect(SEARCH_CREDIT_SETTLE_SECONDS).toBeGreaterThanOrEqual(5);
     });
 
     test('waits for an initial panel parse before declaring completion', () => {

@@ -1,6 +1,13 @@
 import { buildBingPageUrl, buildBingSearchUrl, normalizeBingTaskUrl } from '../../src/navigation';
+import { shouldUseFullPageSearchNavigation } from '../../src/search';
 
 describe('Bing navigation', () => {
+    test('uses full-page navigation on Bing and keeps fixture form submission elsewhere', () => {
+        expect(shouldUseFullPageSearchNavigation('www.bing.com')).toBe(true);
+        expect(shouldUseFullPageSearchNavigation('cn.bing.com')).toBe(true);
+        expect(shouldUseFullPageSearchNavigation('localhost')).toBe(false);
+    });
+
     test('preserves locale parameters and removes unrelated search parameters', () => {
         const result = new URL(buildBingPageUrl(
             '/search',
