@@ -148,6 +148,16 @@ test('shows the collapsed badge and opens the control panel from the badge', asy
   await expect(page.locator('.rh-header')).toContainText('Rewards Points Farmer');
 });
 
+test('initializes when the userscript is injected after the page load event', async ({ page }) => {
+  await page.goto(fixtureUrl);
+  await expect.poll(() => page.evaluate(() => document.readyState)).toBe('complete');
+
+  await page.addScriptTag({ path: userscriptPath });
+
+  await expect(page.locator('#rh-badge')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => typeof (window as any).startRewardsTask)).toBe('function');
+});
+
 test('keeps the floating button fixed while the page scrolls', async ({ page }) => {
   await loadUserscriptFixture(page);
 
@@ -422,22 +432,34 @@ test('parses and closes the cross-origin vNext Rewards side panel', async ({ pag
     vNextLayout: true,
   });
 
-  await expect(page.locator('#rh-progress-text')).toHaveText('25/200', { timeout: 8_000 });
-  await expect(page.locator('#rh-tasks-count')).toHaveText('(1/2)');
-  await expect(page.locator('#rh-tasks-list')).toContainText('Plan a weekend getaway');
-  await expect(page.locator('#rh-tasks-list')).toContainText('NASA Artemis mission');
+  await expect(page.locator('#rh-progress-text')).toHaveText('80/180', { timeout: 8_000 });
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(1/7)');
+  await expect(page.locator('#rh-tasks-list')).toContainText('我附近即将举行的活动');
+  await expect(page.locator('#rh-tasks-list')).toContainText('焕新您的日常');
+  await expect(page.locator('#rh-tasks-list')).toContainText('查看选项');
 
   const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
-  expect(queue).toHaveLength(1);
+  expect(queue).toHaveLength(6);
   expect(queue[0]).toMatchObject({
-    title: 'Plan a weekend getaway',
-    kind: 'search-promotion',
+    title: '我附近即将举行的活动',
+    kind: 'navigation',
     points: 10,
     source: 'card',
   });
-  expect(queue[0].searchTerms).not.toEqual(
-    expect.arrayContaining([expect.stringMatching(/(?:https?:\/\/|bing\.com|^\/search)/i)])
-  );
+  expect(queue.slice(2).map((task: { title: string; url: string }) => [task.title, task.url])).toEqual([
+    ['焕新您的日常', ''],
+    ['观看演出', ''],
+    ['查看选项', ''],
+    ['驾驭您的旅程', ''],
+  ]);
+  expect(queue.slice(2).map((task: { kind: string }) => task.kind)).toEqual([
+    'search-promotion',
+    'search-promotion',
+    'search-promotion',
+    'search-promotion',
+  ]);
+  expect(queue[2].searchTerms).toEqual(['美容产品', '护发产品', '香水产品']);
+  expect(queue[4].searchTerms).toEqual(['附近互联网套餐', '家庭互联网套餐', '宽带服务商']);
   await expect.poll(() => page.evaluate(() => document.body.dataset.flyoutCloseCount)).toBe('1');
   await expect(page.locator('#rewid-f')).toHaveCount(0);
   await expect(page.locator('#id_rh_w')).toHaveAttribute('aria-expanded', 'false');
@@ -460,9 +482,10 @@ test('clicks a vNext activity through the cross-origin Rewards bridge', async ({
     ).toBe(1);
     const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
     expect(queue[0]).toMatchObject({
-      title: 'Plan a weekend getaway',
+      title: '焕新您的日常',
       attempts: 1,
     });
+    await expect.poll(() => page.evaluate(() => document.body.dataset.lastCardClick)).toBe('beauty');
   } finally {
     await page.evaluate(() => (window as any).stopRewardsTask());
   }

@@ -188,7 +188,7 @@ if (window !== window.top) {
     // the top-level Bing instance remains the sole owner of UI and state.
     registerRewardsPanelBridge();
 } else {
-    window.addEventListener('load', function () {
+    const initializeTopLevel = () => {
         console.log('Rewards Points Farmer 已加载');
         dedicatedWorker = initializeDedicatedWorkerContext();
         store.loadConfig();
@@ -256,5 +256,11 @@ if (window !== window.top) {
                 }
             });
         }, 1000);
-    });
+    };
+
+    if (document.readyState === 'complete') {
+        initializeTopLevel();
+    } else {
+        window.addEventListener('load', initializeTopLevel, { once: true });
+    }
 }

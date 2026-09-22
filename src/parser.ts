@@ -179,6 +179,8 @@ function discoverCards(doc: Document): Set<Element> {
     
     doc.querySelectorAll([
         '#exb-activityChecklist .promo_cont',
+        '#dailyset a[href]',
+        '#exploreonbing [role="link"]',
         '#moreactivities a[href]',
         'section[id*="activit" i] a[href]',
         'div[aria-label*="Offer" i]',
@@ -214,14 +216,17 @@ export function isRewardsTaskCard(card: Element): boolean {
     const link = card.tagName.toLowerCase() === 'a' ? card : card.querySelector('a');
     const href = link ? (link.getAttribute('href') || '').trim() : '';
     const ariaLabel = card.getAttribute('aria-label') || '';
+    const isVNextPressableLink = card.matches('[role="link"]') &&
+        Boolean(card.closest('#exploreonbing')) &&
+        (card.hasAttribute('data-react-aria-pressable') || card.hasAttribute('tabindex'));
 
-    if (!href) {
+    if (!href && !isVNextPressableLink) {
         console.log(`[RewardsHelper] 剔除卡片 (缺少任务链接): aria="${ariaLabel}"`);
         return false;
     }
 
     const isChecklistTask = Boolean(card.closest('#exb-activityChecklist'));
-    const isVNextActivity = Boolean(card.closest('#moreactivities, section[id*="activit" i]'));
+    const isVNextActivity = Boolean(card.closest('#dailyset, #exploreonbing, #moreactivities, section[id*="activit" i]'));
     const hasTrustedTaskShape = isChecklistTask || card.matches(
         '#exclusive_promo_cont, [data-task-id], .promo_cont.slim, .rw-card, .explore-card, .task-card'
     ) || isVNextActivity;
@@ -229,7 +234,7 @@ export function isRewardsTaskCard(card: Element): boolean {
     const normalizedHref = href.toLowerCase();
     const isRelativeBingPath = normalizedHref.startsWith('/') && !normalizedHref.startsWith('//');
     let parsedUrl: URL | null = null;
-    if (!isRelativeBingPath) {
+    if (href && !isRelativeBingPath) {
         try {
             parsedUrl = new URL(normalizedHref, window.location.href);
             if ((parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') || !isBingHost(parsedUrl.hostname)) {
@@ -622,8 +627,9 @@ function getCardDisplayName(card: Element, idx: number): string {
 
 function createDailyTaskFromCard(card: Element, idx: number, status: string): DailyTask | null {
     const linkElem = card.tagName.toLowerCase() === 'a' ? card : card.querySelector('a');
-    const href = linkElem ? linkElem.getAttribute('href') : '';
-    if (!href) return null;
+    const href = linkElem ? (linkElem.getAttribute('href') || '') : '';
+    const isVNextPressableLink = card.matches('[role="link"]') && Boolean(card.closest('#exploreonbing'));
+    if (!href && !isVNextPressableLink) return null;
 
     const ariaLabel = card.getAttribute('aria-label') || '';
     const title = getCardDisplayName(card, idx);
@@ -694,6 +700,21 @@ function addIframeSearchTerms(items: any[]): number {
 }
 
 let lastParsedPanelProgress: RewardsPanelSnapshot['currentProgress'] = null;
+
+function getScopedProgressContext(element: Element, fallbackDepth: number): string {
+    const section = element.closest('section, [role="region"]');
+    if (section) {
+        return `${section.getAttribute('aria-label') || ''} ${section.textContent || ''}`.toLowerCase();
+    }
+
+    let context = element.parentElement;
+    let contextText = element.textContent || '';
+    for (let depth = 0; context && depth < fallbackDepth; depth++) {
+        contextText += ` ${context.getAttribute('aria-label') || ''} ${context.textContent || ''}`;
+        context = context.parentElement;
+    }
+    return contextText.toLowerCase();
+}
 
 export function getDataFromPanel() {
     store.searchState.panelParsed = false;
@@ -792,15 +813,7 @@ export function getDataFromPanel() {
                     const max = parseInt(matches[2], 10);
                     if (max >= 12 && max <= 1000 && !txt.toLowerCase().includes('min') && !txt.toLowerCase().includes('level') && !txt.includes('级')) {
                         
-                        let parent = el.parentElement;
-                        let contextText = txt;
-                        let upCount = 0;
-                        while (parent && upCount < 3) {
-                            contextText += ' ' + (parent.textContent || '');
-                            parent = parent.parentElement;
-                            upCount++;
-                        }
-                        contextText = contextText.toLowerCase();
+                        const contextText = getScopedProgressContext(el, 3);
 
                         if (contextText.includes('浏览') || contextText.includes('browse') || 
                             contextText.includes('阅读') || contextText.includes('read')) {
@@ -808,7 +821,7 @@ export function getDataFromPanel() {
                         }
 
                         const isSearch = contextText.includes('搜索') || contextText.includes('search') || contextText.includes('pc');
-                        potentialProgresses.push({ current: cur, max: max, isSearch });
+                        potentialProgresses.push({ current: cur, max: max, isSearch, source: 'text' });
                     }
                 }
             }
@@ -819,18 +832,13 @@ export function getDataFromPanel() {
             const max = Number(element.getAttribute('aria-valuemax'));
             if (!Number.isFinite(current) || !Number.isFinite(max) || max < 12 || max > 1000) return;
 
-            let context = element.parentElement;
-            let contextText = element.getAttribute('aria-label') || '';
-            for (let depth = 0; context && depth < 4; depth++) {
-                contextText += ` ${context.textContent || ''}`;
-                context = context.parentElement;
-            }
-            const normalizedContext = contextText.toLowerCase();
+            const normalizedContext = `${element.getAttribute('aria-label') || ''} ${getScopedProgressContext(element, 4)}`.toLowerCase();
             if (/\b(?:browse|read)\b|浏览|阅读/.test(normalizedContext)) return;
             potentialProgresses.push({
                 current,
                 max,
-                isSearch: /\b(?:search|pc)\b|搜索/.test(normalizedContext)
+                isSearch: /\b(?:search|pc)\b|搜索/.test(normalizedContext),
+                source: 'progressbar'
             });
         });
 
@@ -839,8 +847,14 @@ export function getDataFromPanel() {
             const searchProgresses = potentialProgresses.filter(p => p.isSearch);
             if (searchProgresses.length > 0) {
                 best = searchProgresses.reduce((prev, curr) => (prev.max > curr.max) ? prev : curr);
-            } else if (potentialProgresses.length === 1) {
-                best = potentialProgresses[0];
+            } else {
+                // The new flyout renders both the real points fraction (80/180)
+                // and an accessibility percentage progressbar (44.4/100) in the
+                // same section. Prefer an explicit fraction even when a region's
+                // daily total is below 100, then use an ARIA bar as the fallback.
+                const textProgresses = potentialProgresses.filter(p => p.source === 'text');
+                const candidatePool = textProgresses.length > 0 ? textProgresses : potentialProgresses;
+                best = candidatePool.reduce((prev, curr) => (prev.max > curr.max) ? prev : curr);
             }
             currentBestProgress = best;
         }
@@ -1134,12 +1148,18 @@ async function clickTaskCardInDocument(task: DailyTask, targetDoc: Document): Pr
             const card = link.closest('.promo_cont, .rw-card, .explore-card, .task-card, [data-task-id], [data-offer-id]') || link;
             return cleanupTaskText(getCardDisplayName(card, 0)).toLowerCase() === normalizedTaskTitle;
         }) || matchingLinks[0];
+        const pressableElem = Array.from(targetDoc.querySelectorAll('#exploreonbing [role="link"]')).find(card =>
+            cleanupTaskText(getCardDisplayName(card, 0)).toLowerCase() === normalizedTaskTitle
+        ) as HTMLElement | undefined;
+        const actionElem = (linkElem || pressableElem) as HTMLElement | undefined;
 
-        if (linkElem) {
-            const targetElem = linkElem as HTMLElement;
-            console.log(`[RewardsHelper] 找到任务卡片并模拟点击: ${url}`);
-            const normalizedUrl = normalizeBingTaskUrl(linkElem.getAttribute('href') || url);
-            if (normalizedUrl !== linkElem.href) linkElem.href = normalizedUrl;
+        if (actionElem) {
+            const targetElem = actionElem;
+            console.log(`[RewardsHelper] 找到任务卡片并模拟点击: ${url || task.title}`);
+            if (linkElem) {
+                const normalizedUrl = normalizeBingTaskUrl(linkElem.getAttribute('href') || url);
+                if (normalizedUrl !== linkElem.href) linkElem.href = normalizedUrl;
+            }
 
             const rect = targetElem.getBoundingClientRect();
             if (rect.width > 0 && rect.height > 0) {

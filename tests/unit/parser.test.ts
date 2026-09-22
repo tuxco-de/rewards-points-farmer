@@ -241,6 +241,47 @@ describe('Rewards parser', () => {
         expect(clickedTitle).toBe('观看演出');
     });
 
+    test('accepts and clicks a href-less React link in the redesigned explore section', async () => {
+        document.body.innerHTML = '<iframe id="b_rwFlyout"></iframe>';
+        const iframe = document.querySelector('iframe')!;
+        const iframeDoc = iframe.contentDocument!;
+        iframeDoc.body.innerHTML = `
+            <section id="exploreonbing">
+                <span role="link" tabindex="0" data-react-aria-pressable="true">
+                    <img alt="查看选项\u200B" />
+                    <p>在 Bing 上搜索以比较您所在地区的互联网套餐</p>
+                    <span>+10</span>
+                </span>
+            </section>`;
+        const card = iframeDoc.querySelector('[role="link"]')!;
+        let clicked = false;
+        card.addEventListener('click', () => { clicked = true; });
+
+        expect(isRewardsTaskCard(card)).toBe(true);
+        const handled = await clickTaskCardAsync({
+            url: '',
+            title: '查看选项',
+            status: '未完成',
+            points: 10,
+            kind: 'search-promotion',
+            searchTerms: ['附近互联网套餐'],
+            attempts: 0,
+            source: 'card'
+        });
+
+        expect(handled).toBe(true);
+        expect(clicked).toBe(true);
+    });
+
+    test('still rejects a href-less role link outside the redesigned explore section', () => {
+        const card = document.createElement('span');
+        card.setAttribute('role', 'link');
+        card.setAttribute('tabindex', '0');
+        card.textContent = '普通推广 +10';
+
+        expect(isRewardsTaskCard(card)).toBe(false);
+    });
+
     test('rejects a card without an actionable link', () => {
         const card = document.createElement('div');
         card.className = 'task-card';

@@ -222,7 +222,7 @@ async function runQueuedDailyTaskFromOpenPanel(): Promise<'clicked' | 'search' |
         return 'skipped';
     }
 
-    if (task.attempts === 0 && task.url) {
+    if (task.attempts === 0) {
         const taskClicked = await clickTaskCardAsync(task);
         recordDailyTaskAttempt(task);
         store.saveState();
