@@ -711,6 +711,16 @@ export function parseAccountTotalPoints(targetDoc: Document): number | null {
     const root = targetDoc.querySelector('main') || targetDoc.body;
     if (!root) return null;
 
+    // Redesigned vNext flyout: <span class="text-sectionHeader">52,539</span>
+    // next to <span class="text-labelControl">分</span>.
+    const labeled = root.querySelector(
+        '.text-sectionHeader + .text-labelControl, [class*="sectionHeader"] + [class*="labelControl"]'
+    );
+    if (labeled && /^(?:points?|pts|分)$/i.test((labeled.textContent || '').trim())) {
+        const value = Number(((labeled.previousElementSibling?.textContent) || '').replace(/\D/g, ''));
+        if (Number.isFinite(value) && value >= 0) return value;
+    }
+
     const numericElements = Array.from(root.querySelectorAll('span, div')).filter(element =>
         element.children.length === 0 && /^\s*\d[\d\s,.]*\s*$/.test(element.textContent || '')
     );
@@ -726,7 +736,38 @@ export function parseAccountTotalPoints(targetDoc: Document): number | null {
         const value = Number((element.textContent || '').replace(/\D/g, ''));
         if (Number.isFinite(value) && value >= 0) return value;
     }
+
+    // Fallback: compact "52,539分" / "52,539 points" text near a points unit.
+    const compact = (root.textContent || '').match(/(\d[\d\s,.]*)\s*(?:points?|pts|分)/i);
+    if (compact) {
+        const value = Number(compact[1].replace(/\D/g, ''));
+        if (Number.isFinite(value) && value >= 0) return value;
+    }
     return null;
+}
+
+export function parseMedallionAccountTotalPoints(targetDoc: Document = document): number | null {
+    const el = targetDoc.querySelector(
+        '#rh_rwm[data-content], [data-rewards-widget="medallion"][data-content]'
+    );
+    const raw = el?.getAttribute('data-content');
+    if (!raw) return null;
+    try {
+        const payload = JSON.parse(atob(raw));
+        const balance = Number(payload?.balance);
+        if (Number.isFinite(balance) && balance >= 0) return balance;
+    } catch {
+        // Ignore malformed medallion payloads.
+    }
+    return null;
+}
+
+export function applyMedallionAccountTotalPoints(): number | null {
+    const balance = parseMedallionAccountTotalPoints(document);
+    if (balance === null) return null;
+    lastParsedAccountTotalPoints = balance;
+    applyAccountTotalPoints(balance);
+    return balance;
 }
 
 export function applyAccountTotalPoints(totalPoints: number) {
@@ -889,7 +930,14 @@ export function getDataFromPanel() {
             if (store.isSearching) store.saveState();
         } else {
             console.log('[RewardsHelper] 未找到账户总积分');
-            if (window === window.top) recordMissingAccountTotalPoints();
+            if (window === window.top) {
+                const medallionBalance = applyMedallionAccountTotalPoints();
+                if (medallionBalance !== null) {
+                    console.log(`[RewardsHelper] 已使用主页徽章余额: ${medallionBalance}`);
+                } else {
+                    recordMissingAccountTotalPoints();
+                }
+            }
             if (store.isSearching) store.saveState();
         }
 
@@ -1023,7 +1071,8 @@ function applyRewardsPanelSnapshot(snapshot: RewardsPanelSnapshot): boolean {
     if (snapshot.accountTotalPoints !== null && snapshot.accountTotalPoints !== undefined) {
         applyAccountTotalPoints(snapshot.accountTotalPoints);
     } else {
-        recordMissingAccountTotalPoints();
+        const medallionBalance = applyMedallionAccountTotalPoints();
+        if (medallionBalance === null) recordMissingAccountTotalPoints();
     }
     store.searchState.panelParsed = Boolean(snapshot.panelParsed);
     if (store.searchState.panelParsed) store.searchState.panelFailureCount = 0;

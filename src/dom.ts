@@ -186,6 +186,8 @@ export async function closeRewardsSidebarAsync() {
                     }
                 }
 
+                if (removeInjectedRewardsFlyout()) return;
+
                 const pointsContainer = findVisibleElement(REWARDS_ENTRY_SELECTOR);
                 if (pointsContainer) {
                     clickRewardsEntry(pointsContainer);
@@ -217,11 +219,56 @@ export async function openRewardsSidebarAsync() {
     if (pointsContainer) {
         clickRewardsEntry(pointsContainer);
         console.log('已点击积分按钮，正在打开侧边栏...');
-        return Boolean(await waitForElement(REWARDS_FLYOUT_SELECTOR, 5000));
+        const opened = await waitForElement(REWARDS_FLYOUT_SELECTOR, 5000);
+        if (opened) return true;
+
+        // The redesigned medallion can collapse (#rh_rwm width 0) so the native
+        // click never mounts #rewid-f. Mount the official flyout URL ourselves.
+        return await injectFallbackRewardsFlyout();
     } else {
         console.log('未找到积分按钮');
+        return await injectFallbackRewardsFlyout();
+    }
+}
+
+async function injectFallbackRewardsFlyout(): Promise<boolean> {
+    if (getRewardsFlyoutIframe()) return true;
+    try {
+        const flyout = document.createElement('div');
+        flyout.id = 'rewid-f';
+        flyout.className = 'vnext';
+        flyout.setAttribute('role', 'dialog');
+        flyout.setAttribute('aria-label', 'Microsoft Rewards');
+        flyout.setAttribute('data-rh-injected', '1');
+
+        const iframe = document.createElement('iframe');
+        iframe.width = '100%';
+        iframe.height = '100%';
+        iframe.style.border = 'none';
+        iframe.title = 'Microsoft Rewards, expanded';
+        iframe.src = `https://rewards.bing.com/flyout?channel=bingflyout&partnerId=BingRewards&isDarkMode=0&ru=${encodeURIComponent(window.location.href)}`;
+        flyout.appendChild(iframe);
+        document.body.appendChild(flyout);
+
+        const entry = findVisibleElement(REWARDS_ENTRY_SELECTOR);
+        if (entry) entry.setAttribute('aria-expanded', 'true');
+
+        console.log('[RewardsHelper] 原生浮层未打开，已注入 Rewards flyout iframe');
+        return Boolean(await waitForElement(REWARDS_FLYOUT_SELECTOR, 5000));
+    } catch (e) {
+        console.warn('[RewardsHelper] 注入 Rewards flyout 失败:', e);
         return false;
     }
+}
+
+function removeInjectedRewardsFlyout(): boolean {
+    const injected = document.querySelector('#rewid-f[data-rh-injected="1"]');
+    if (!injected) return false;
+    injected.remove();
+    const entry = findVisibleElement(REWARDS_ENTRY_SELECTOR);
+    if (entry) entry.setAttribute('aria-expanded', 'false');
+    console.log('[RewardsHelper] 已移除注入的 Rewards flyout iframe');
+    return true;
 }
 
 /**

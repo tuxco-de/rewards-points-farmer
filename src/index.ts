@@ -1,7 +1,7 @@
 import { store, STORAGE_KEY } from './state';
 import { createUI, updateStatus, setSearchButtonState, updateProgressUI, updateDailyTasksUI, showToast, openSettingsPanel } from './ui';
 import { openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent } from './dom';
-import { getDataFromPanelAsync, getSearchTermsFromMainDoc, registerRewardsPanelBridge } from './parser';
+import { getDataFromPanelAsync, getSearchTermsFromMainDoc, registerRewardsPanelBridge, applyMedallionAccountTotalPoints } from './parser';
 import { searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm, getExecutionPhase, type SearchExecutionResult } from './search';
 import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
@@ -130,6 +130,7 @@ async function checkForUpdatesAndNotify() {
 }
 
 async function collectRewardsDataInWorker() {
+    applyMedallionAccountTotalPoints();
     let panelParsed = false;
     if (await openRewardsSidebarAsync()) {
         await waitForIframeContent(10000);
@@ -232,6 +233,7 @@ if (window !== window.top) {
 
         setTimeout(() => {
             if (!dedicatedWorker) {
+                applyMedallionAccountTotalPoints();
                 getSearchTermsFromMainDoc();
                 return;
             }
