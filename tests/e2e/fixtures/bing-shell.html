@@ -38,6 +38,7 @@
     <header id="b_header">
       <div id="id_rh">
         <a id="rewards-badge" class="points-container" role="button" href="javascript:document.body.dataset.javascriptNavigation='1'">Rewards 123</a>
+        <div id="rh_rwm" data-rewards-widget="medallion"></div>
       </div>
     </header>
 
@@ -69,7 +70,12 @@
       const unconfiguredEnglishPromotion = params.get('unconfiguredEnglishPromotion') === '1';
       const currentRewardsCards = params.get('currentRewardsCards') === '1';
       const spaSearch = params.get('spaSearch') === '1';
+      const hideAccountTotal = params.get('hideAccountTotal') === '1';
       const accountPoints = Number(params.get('accountPoints') || '50000');
+      const medallion = document.getElementById('rh_rwm');
+      if (medallion) {
+        medallion.setAttribute('data-content', btoa(JSON.stringify({ balance: accountPoints })));
+      }
       const firstPromotionTitle = unconfiguredEnglishPromotion
         ? 'Plan your future'
         : (unconfiguredPromotion ? '规划你的未来' : '查找住宿地点');
@@ -101,10 +107,10 @@
         <html>
           <body>
             <section aria-label="Rewards panel">
-              <div class="account-total">
+              ${hideAccountTotal ? '' : `<div class="account-total">
                 <span class="text-sectionHeader">${accountPoints.toLocaleString('en-US')}</span>
                 <span class="text-labelControl">points</span>
-              </div>
+              </div>`}
               ${legacyProgressMarkup}
 
               <a class="rw-card" aria-label="Daily poll - 10 points" href="/search?q=https%3A%2F%2Fwww.bing.com%2Frewards">
@@ -195,10 +201,10 @@
           <body>
             <main id="app" aria-label="Microsoft Rewards">
               <button type="button" data-flyout-close aria-label="Close">Close</button>
-              <div class="account-total">
+              ${hideAccountTotal ? '' : `<div class="account-total">
                 <span class="text-sectionHeader">${accountPoints.toLocaleString('en-US')}</span>
                 <span class="text-labelControl">points</span>
-              </div>
+              </div>`}
               <section class="flyout_exb_card">
                 ${modernProgressMarkup}
                 <div id="exb-activityChecklist">

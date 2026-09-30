@@ -349,6 +349,7 @@ class StateStore {
         panelParsed: false,
         panelFailureCount: 0,
         totalSearchAttempts: 0,
+        lastCreditSettledAttempt: 0,
         restCycles: 0,
         dailyTasksQueue: [] as DailyTask[],
         attemptedTasks: [] as string[]
@@ -438,6 +439,7 @@ class StateStore {
         this.searchState.panelParsed = false;
         this.searchState.panelFailureCount = 0;
         this.searchState.totalSearchAttempts = 0;
+        this.searchState.lastCreditSettledAttempt = 0;
         this.searchState.restCycles = 0;
         this.searchState.dailyTasksQueue = [];
         this.searchState.attemptedTasks = [];

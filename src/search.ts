@@ -25,6 +25,23 @@ function cancelActiveCountdown() {
     resolve?.();
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T | null> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<null>(resolve => {
+                timer = setTimeout(() => {
+                    console.warn(`[RewardsHelper] ${label} 超时 (${ms}ms)，继续执行`);
+                    resolve(null);
+                }, ms);
+            })
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
 export async function simulateScrollingAsync() {
     updateStatus(t('status', 'browsing'));
     store.searchState.currentAction = 'scrolling';
@@ -108,6 +125,26 @@ export async function ensureFallbackSearchTerms() {
 
 export type ExecutionPhase = 'points' | 'cards' | 'complete';
 export type SearchExecutionResult = 'navigating' | 'same-page' | 'skipped' | 'stopped';
+
+async function navigateToSearchUrl(searchUrl: string): Promise<SearchExecutionResult> {
+    let isUnloading = false;
+    const markUnloading = () => { isUnloading = true; };
+    window.addEventListener('beforeunload', markUnloading, { once: true });
+    try {
+        window.location.assign(searchUrl);
+    } catch (e) {
+        console.warn('[RewardsHelper] 搜索页跳转失败:', e);
+    }
+    await sleep(400);
+    window.removeEventListener('beforeunload', markUnloading);
+    if (isUnloading) {
+        console.log('[RewardsHelper] 模拟提交后页面已正常触发跳转');
+        return 'navigating';
+    }
+    // assign() can be a no-op (blocked or same-document). Keep the task loop alive.
+    console.warn('[RewardsHelper] 搜索页跳转未触发卸载，继续任务循环');
+    return 'same-page';
+}
 
 export function getExecutionPhase(): ExecutionPhase {
     if (!store.currentProgress.completed) return 'points';
@@ -298,14 +335,12 @@ export async function performSearch(task?: DailyTask | null): Promise<SearchExec
     // Rewards to observe and credit the query.
     if (shouldUseFullPageSearchNavigation()) {
         console.log('[RewardsHelper] 使用独立搜索页面提交，等待 Bing 记录本次积分');
-        window.location.assign(searchUrl);
-        return 'navigating';
+        return await navigateToSearchUrl(searchUrl);
     }
 
     if (getRewardsFlyoutIframe()) {
         console.log('[RewardsHelper] Rewards 浮层仍处于打开状态，使用单次 URL 跳转避免 Bing React SPA 冲突');
-        window.location.href = searchUrl;
-        return 'navigating';
+        return await navigateToSearchUrl(searchUrl);
     }
     
     const typingSuccess = await simulateTypingAndSearch(searchTerm);
@@ -329,9 +364,8 @@ export async function performSearch(task?: DailyTask | null): Promise<SearchExec
         }
         console.log('[RewardsHelper] 模拟提交后页面未发生跳转或更新，使用 fallback 跳转');
     }
-    
-    window.location.href = searchUrl;
-    return 'navigating';
+
+    return await navigateToSearchUrl(searchUrl);
 }
 
 export async function searchLoop() {
@@ -340,27 +374,30 @@ export async function searchLoop() {
         const currentSearchQuery = new URLSearchParams(window.location.search).get('q') || '';
         const hasPendingSearchCredit = getExecutionPhase() === 'points'
             && store.searchState.totalSearchAttempts > 0
+            && store.searchState.totalSearchAttempts > store.searchState.lastCreditSettledAttempt
             && Boolean(currentSearchQuery.trim());
         if (hasPendingSearchCredit) {
             // Bing credits a search asynchronously. Opening the Rewards flyout or a
             // progress check immediately after navigation can race that background update.
             updateStatus(t('status', 'waitingProgress'));
             await countdownAsync(SEARCH_CREDIT_SETTLE_SECONDS, 'waitingProgress');
+            store.searchState.lastCreditSettledAttempt = store.searchState.totalSearchAttempts;
             if (!store.isSearching) return;
         }
 
-        updateStatus(t('status', 'waitingProgress'));
+        updateStatus(t('status', 'checkingProgress'));
         store.searchState.currentAction = 'checking';
-        
-        if (await openRewardsSidebarAsync()) {
-            await waitForIframeContent(10000);
-            const panelParsed = await getDataFromPanelAsync();
+
+        const panelOpened = await withTimeout(openRewardsSidebarAsync(), 15_000, '打开 Rewards 侧栏');
+        if (panelOpened) {
+            await withTimeout(waitForIframeContent(10000), 12_000, '等待 Rewards 浮层内容');
+            const panelParsed = await withTimeout(getDataFromPanelAsync(), 8_000, '解析 Rewards 面板');
             getSearchTermsFromMainDoc();
 
             if (!panelParsed || !store.searchState.panelParsed) {
                 store.searchState.panelFailureCount++;
                 store.saveState();
-                await closeRewardsSidebarAsync();
+                await withTimeout(closeRewardsSidebarAsync(), 8_000, '关闭 Rewards 侧栏');
                 if (store.searchState.panelFailureCount >= MAX_PANEL_FAILURES) {
                     stopAutomatedSearch(t('status', 'panelFailuresStopped', MAX_PANEL_FAILURES), true);
                     return;
@@ -375,10 +412,16 @@ export async function searchLoop() {
             const executionPhase = getExecutionPhase();
             let queuedTaskAction: 'clicked' | 'search' | 'skipped' | 'none' = 'none';
             if (executionPhase === 'cards' && store.searchState.dailyTasksQueue.length > 0) {
-                queuedTaskAction = await runQueuedDailyTaskFromOpenPanel();
+                // Drain exhausted cards in this same panel session so the next
+                // executable card is clicked without an extra open/close cycle.
+                for (;;) {
+                    queuedTaskAction = await withTimeout(runQueuedDailyTaskFromOpenPanel(), 10_000, '执行面板卡片任务') ?? 'none';
+                    if (queuedTaskAction !== 'skipped') break;
+                    if (getExecutionPhase() === 'complete' || store.searchState.dailyTasksQueue.length === 0) break;
+                }
             }
 
-            await closeRewardsSidebarAsync();
+            await withTimeout(closeRewardsSidebarAsync(), 8_000, '关闭 Rewards 侧栏');
 
             if (queuedTaskAction === 'clicked') {
                 updateStatus(t('status', 'executingPanel'));

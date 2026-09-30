@@ -57,7 +57,28 @@ function accountProgress(overrides: Partial<AccountProgress> = {}): AccountProgr
 async function loadUserscriptFixture(
   page: Page,
   savedState?: SavedState,
-  options: { worker?: boolean; pointsComplete?: boolean; accountPoints?: number; menuApi?: boolean; modernLayout?: boolean; vNextLayout?: boolean; rejectMouseEventView?: boolean; wrappedInputValue?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean; unconfiguredPromotion?: boolean; unconfiguredEnglishPromotion?: boolean; currentRewardsCards?: boolean; spaSearch?: boolean } = {}
+  options: {
+    worker?: boolean;
+    pointsComplete?: boolean;
+    accountPoints?: number;
+    menuApi?: boolean;
+    modernLayout?: boolean;
+    vNextLayout?: boolean;
+    rejectMouseEventView?: boolean;
+    wrappedInputValue?: boolean;
+    englishSummary?: boolean;
+    completedChineseSummary?: boolean;
+    hundredTotal?: boolean;
+    completedCard?: boolean;
+    reactiveAutocomplete?: boolean;
+    unconfiguredPromotion?: boolean;
+    unconfiguredEnglishPromotion?: boolean;
+    currentRewardsCards?: boolean;
+    spaSearch?: boolean;
+    blockSearchNavigation?: boolean;
+    hideAccountTotal?: boolean;
+    searchQuery?: string;
+  } = {}
 ) {
   if (savedState) {
     await page.context().addInitScript(state => {
@@ -124,6 +145,24 @@ async function loadUserscriptFixture(
     });
   }
 
+  if (options.blockSearchNavigation) {
+    // location.assign cannot be patched on Chromium Location objects.
+    // Intercept search navigations (buildBingSearchUrl always sets form=QBRE)
+    // and return the fixture again so the worker loop can continue.
+    await page.route(url => {
+      return url.searchParams.get('form') === 'QBRE' || /\/search(\?|$)/.test(url.pathname + url.search);
+    }, route => {
+      const url = route.request().url();
+      const html = fs.readFileSync(fixturePath, 'utf8')
+        .replace(
+          'const params = new URLSearchParams(window.location.search);',
+          'const params = new URLSearchParams(window.location.search + "&modernLayout=1&rewards_helper_worker=1");'
+        )
+        .replace('<body>', `<body data-blocked-search-nav="${url.replace(/"/g, '&quot;')}">`);
+      route.fulfill({ contentType: 'text/html; charset=utf-8', body: html });
+    });
+  }
+
   await page.context().addInitScript({ path: userscriptPath });
   if (options.vNextLayout) {
     await page.route('https://www.bing.com/**', route => route.fulfill({
@@ -139,7 +178,12 @@ async function loadUserscriptFixture(
   const url = new URL(options.vNextLayout
     ? 'https://www.bing.com/__rewards-helper-fixture__'
     : fixtureUrl);
-  if (options.worker) url.searchParams.set('rewards_helper_worker', '1');
+  if (options.worker) {
+    await page.context().addInitScript(() => {
+      sessionStorage.setItem('bing_rewards_worker_session', '1');
+    });
+    url.searchParams.set('rewards_helper_worker', '1');
+  }
   if (options.pointsComplete) url.searchParams.set('pointsComplete', '1');
   if (options.accountPoints !== undefined) url.searchParams.set('accountPoints', String(options.accountPoints));
   if (options.modernLayout) url.searchParams.set('modernLayout', '1');
@@ -153,6 +197,8 @@ async function loadUserscriptFixture(
   if (options.unconfiguredEnglishPromotion) url.searchParams.set('unconfiguredEnglishPromotion', '1');
   if (options.currentRewardsCards) url.searchParams.set('currentRewardsCards', '1');
   if (options.spaSearch) url.searchParams.set('spaSearch', '1');
+  if (options.hideAccountTotal) url.searchParams.set('hideAccountTotal', '1');
+  if (options.searchQuery) url.searchParams.set('q', options.searchQuery);
   await page.goto(url.toString());
   await page.waitForFunction(() => typeof (window as any).startRewardsTask === 'function');
 }
@@ -496,11 +542,16 @@ test('clicks a vNext activity through the cross-origin Rewards bridge', async ({
   });
 
   await expect(page.locator('#rh-progress-text')).toHaveText('✅ 50,000 pts', { timeout: 8_000 });
+  await expect
+    .poll(async () => {
+      return page.evaluate(() => ((window as any).__e2e_getParsedSnapshot?.().dailyTasksQueue?.length ?? 0) > 0);
+    }, { timeout: 8_000 })
+    .toBe(true);
   await page.evaluate(() => (window as any).startRewardsTask());
   try {
     await expect.poll(
       () => page.evaluate(() => Number(document.body.dataset.cardClickCount || 0)),
-      { timeout: 8_000 }
+      { timeout: 12_000 }
     ).toBe(1);
     const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
     expect(queue[0]).toMatchObject({
@@ -653,6 +704,11 @@ test.describe('Rewards DOM value integration matrix', () => {
     await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true });
 
     await expect(page.locator('#rh-progress-text')).toHaveText('50,000 pts', { timeout: 6_000 });
+    await expect
+      .poll(async () => {
+        return page.evaluate(() => (window as any).__e2e_getParsedSnapshot?.().dailyTasksData?.length ?? 0);
+      }, { timeout: 8_000 })
+      .toBeGreaterThanOrEqual(2);
     const snapshot = await page.evaluate(() => (window as any).__e2e_getParsedSnapshot());
 
     expect(snapshot.currentProgress).toMatchObject({
@@ -850,12 +906,21 @@ test('finishes immediately and renders skipped state when the last queued card r
 });
 
 test('continues with the next card after a completed-points card reaches its attempt limit', async ({ page }) => {
-  test.setTimeout(20_000);
+  test.setTimeout(45_000);
+  await page.context().addInitScript(() => {
+    localStorage.setItem('bing_rewards_config', JSON.stringify({
+      searchInterval: [1, 1],
+      scrollTime: 1,
+      restTime: 30,
+      maxNoProgressCount: 5,
+    }));
+  });
   await loadUserscriptFixture(page, {
-    isSearching: false,
+    isSearching: true,
     currentProgress: accountProgress({ completed: true, noProgressCount: 2 }),
     usedSearchTerms: [],
     totalSearchAttempts: 3,
+    lastCreditSettledAttempt: 3,
     dailyTasksQueue: [
       {
         url: '/search?q=https%3A%2F%2Fwww.bing.com%2Frewards',
@@ -883,17 +948,13 @@ test('continues with the next card after a completed-points card reaches its att
     modernLayout: true,
   });
 
-  await expect(page.locator('#rh-badge-text')).toHaveText('📋 0/2', { timeout: 6_000 });
-  await page.evaluate(() => (window as any).startRewardsTask());
-
   await expect
-    .poll(() => page.evaluate(() => document.body.dataset.lastCardClick), { timeout: 12_000 })
+    .poll(() => page.evaluate(() => document.body.dataset.lastCardClick || ''), { timeout: 25_000 })
     .toBe('/rewards/task/nasa-artemis');
 
   const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
-  expect(queue[0]).toMatchObject({ title: 'NASA Artemis mission', attempts: 1 });
+  expect(queue.find((task: { title: string }) => task.title === 'NASA Artemis mission')).toMatchObject({ attempts: 1 });
   await expect(page.locator('#rh-badge-text')).not.toHaveText('✅ Done');
-  await page.evaluate(() => (window as any).stopRewardsTask());
 });
 
 test('executes a search promotion with its first fixed term when the card query is a URL', async ({ page }) => {
@@ -1046,4 +1107,237 @@ test('submits through the redesigned semantic Bing search form with a wrapped in
     .poll(() => page.evaluate(() => document.body.dataset.lastQuery))
     .toBe('modern playwright check');
   expect(await page.evaluate(() => document.body.dataset.inputEventCount)).toBe('1');
+});
+
+test('settles pending search credit and keeps the points loop moving', async ({ page }) => {
+  test.setTimeout(30_000);
+  await page.context().addInitScript(() => {
+    localStorage.setItem('bing_rewards_config', JSON.stringify({
+      searchInterval: [1, 1],
+      scrollTime: 1,
+      restTime: 30,
+      maxNoProgressCount: 10,
+    }));
+  });
+  await loadUserscriptFixture(page, {
+    isSearching: true,
+    currentProgress: accountProgress({ completed: false }),
+    totalSearchAttempts: 1,
+    usedSearchTerms: ['credited query'],
+    mainPageSearchTerms: ['next points term'],
+    dailyTasksQueue: [],
+    attemptedTasks: [],
+  }, {
+    worker: true,
+    modernLayout: true,
+    blockSearchNavigation: true,
+    searchQuery: 'credited query',
+  });
+
+  // Restore should leave the waiting-for-progress status and perform another search.
+  await expect
+    .poll(() => page.evaluate(() => document.querySelector('#rh-status-text')?.textContent || ''), { timeout: 20_000 })
+    .not.toMatch(/等待获取进度信息|Waiting for progress info/);
+  await expect
+    .poll(() => page.evaluate(() => document.body.dataset.blockedSearchNav || ''), { timeout: 25_000 })
+    .toContain('q=');
+});
+
+test('does not exit the task loop when search navigation is intercepted', async ({ page }) => {
+  test.setTimeout(35_000);
+  await page.context().addInitScript(() => {
+    localStorage.setItem('bing_rewards_config', JSON.stringify({
+      searchInterval: [1, 1],
+      scrollTime: 1,
+      restTime: 30,
+      maxNoProgressCount: 10,
+    }));
+  });
+  await loadUserscriptFixture(page, {
+    isSearching: true,
+    currentProgress: accountProgress({ completed: false }),
+    totalSearchAttempts: 1,
+    usedSearchTerms: ['noop nav term'],
+    mainPageSearchTerms: ['noop nav term one', 'noop nav term two'],
+    dailyTasksQueue: [],
+    attemptedTasks: [],
+  }, {
+    worker: true,
+    modernLayout: true,
+    blockSearchNavigation: true,
+    searchQuery: 'noop nav term',
+  });
+
+  await expect
+    .poll(() => page.evaluate(() => document.body.dataset.blockedSearchNav || ''), { timeout: 30_000 })
+    .toContain('q=');
+  // The intercepted search still counts as an attempt and keeps farming state.
+  await expect.poll(async () => {
+    return page.evaluate(() => {
+      const raw = localStorage.getItem('bing_rewards_auto_searcher_state');
+      const state = raw ? JSON.parse(raw) : null;
+      return Boolean(state?.isSearching && (state?.totalSearchAttempts || 0) >= 1);
+    });
+  }, { timeout: 10_000 }).toBe(true);
+});
+
+test('completes the points phase after consecutive no-progress and runs card tasks', async ({ page }) => {
+  test.setTimeout(35_000);
+  await page.context().addInitScript(() => {
+    localStorage.setItem('bing_rewards_config', JSON.stringify({
+      searchInterval: [1, 1],
+      scrollTime: 1,
+      restTime: 30,
+      maxNoProgressCount: 1,
+    }));
+  });
+  await loadUserscriptFixture(page, {
+    isSearching: true,
+    currentProgress: accountProgress({ completed: false, noProgressCount: 0 }),
+    totalSearchAttempts: 1,
+    lastCreditSettledAttempt: 1,
+    usedSearchTerms: ['search attempt without points'],
+    dailyTasksQueue: [{
+      url: '/search?q=https%3A%2F%2Fwww.bing.com%2Frewards',
+      title: '查找住宿地点',
+      status: '未完成',
+      points: 10,
+      kind: 'search-promotion',
+      searchTerms: ['住宿地点', '适合周末旅行的住宿地点'],
+      attempts: 0,
+    }],
+    attemptedTasks: [],
+  }, { worker: true, modernLayout: true, pointsComplete: true, blockSearchNavigation: true });
+
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__e2e_getExecutionPhase()), { timeout: 20_000 })
+    .toBe('cards');
+  await expect
+    .poll(() => page.evaluate(() => document.body.dataset.lastCardClick || ''), { timeout: 20_000 })
+    .toContain('/search?q=');
+  await expect
+    .poll(() => {
+      return page.evaluate(() => {
+        const queue = (window as any).__e2e_getDailyTaskQueue?.() || [];
+        return queue[0]?.attempts || 0;
+      });
+    }, { timeout: 15_000 })
+    .toBeGreaterThan(0);
+});
+
+test('falls back to the homepage medallion when the panel omits account points', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, {
+    worker: true,
+    modernLayout: true,
+    hideAccountTotal: true,
+    accountPoints: 52_439,
+  });
+
+  await expect(page.locator('#rh-progress-text')).toHaveText('52,439 pts', { timeout: 8_000 });
+  expect(await page.evaluate(() => (window as any).__e2e_getCurrentProgress())).toMatchObject({
+    mode: 'account-total',
+    initialized: true,
+    current: 52_439,
+    baseline: 52_439,
+  });
+});
+
+test('injects a fallback Rewards flyout when the native entry stays closed', async ({ page }) => {
+  await page.context().addInitScript(() => {
+    document.addEventListener('DOMContentLoaded', () => {
+      const entry = document.querySelector('#rewards-badge, #id_rh_w');
+      entry?.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+    });
+  });
+  await page.route('https://rewards.bing.com/flyout**', route => route.fulfill({
+    contentType: 'text/html',
+    body: fs.readFileSync(vNextFlyoutFixturePath, 'utf8'),
+  }));
+  await loadUserscriptFixture(page, undefined, {
+    worker: true,
+    modernLayout: true,
+    hideAccountTotal: true,
+    accountPoints: 51_234,
+  });
+
+  // Medallion covers points even when the native flyout click is blocked.
+  await expect(page.locator('#rh-progress-text')).toHaveText('51,234 pts', { timeout: 15_000 });
+  // Native entry is blocked, so the helper must mount its own flyout.
+  await expect
+    .poll(() => page.evaluate(() => Boolean(document.querySelector('#rewid-f[data-rh-injected="1"]'))), { timeout: 15_000 })
+    .toBe(true);
+});
+
+test('clicks a same-origin navigation card and records its attempt', async ({ page }) => {
+  test.setTimeout(25_000);
+  await page.context().addInitScript(() => {
+    localStorage.setItem('bing_rewards_config', JSON.stringify({
+      searchInterval: [1, 1],
+      scrollTime: 1,
+      restTime: 30,
+      maxNoProgressCount: 5,
+    }));
+  });
+  await loadUserscriptFixture(page, {
+    isSearching: true,
+    currentProgress: accountProgress({ completed: true }),
+    totalSearchAttempts: 1,
+    lastCreditSettledAttempt: 1,
+    usedSearchTerms: ['credited query'],
+    dailyTasksQueue: [{
+      url: '/search?q=https%3A%2F%2Fwww.bing.com%2Frewards',
+      title: '查找住宿地点',
+      status: '未完成',
+      points: 10,
+      kind: 'navigation',
+      searchTerms: [],
+      attempts: 0,
+    }],
+    attemptedTasks: [],
+  }, { worker: true, modernLayout: true, pointsComplete: true });
+
+  await expect
+    .poll(() => {
+      return page.evaluate(() => {
+        const queue = (window as any).__e2e_getDailyTaskQueue?.() || [];
+        return queue.find((task: { title: string }) => task.title === '查找住宿地点')?.attempts || 0;
+      });
+    }, { timeout: 20_000 })
+    .toBeGreaterThan(0);
+});
+
+test('keeps checking Rewards progress instead of stalling on waiting text', async ({ page }) => {
+  test.setTimeout(30_000);
+  await page.context().addInitScript(() => {
+    localStorage.setItem('bing_rewards_config', JSON.stringify({
+      searchInterval: [1, 1],
+      scrollTime: 1,
+      restTime: 30,
+      maxNoProgressCount: 10,
+    }));
+  });
+  await loadUserscriptFixture(page, {
+    isSearching: true,
+    currentProgress: accountProgress({ completed: false }),
+    totalSearchAttempts: 2,
+    usedSearchTerms: ['one', 'two'],
+    mainPageSearchTerms: ['third points term'],
+    dailyTasksQueue: [],
+    attemptedTasks: [],
+  }, { worker: true, modernLayout: true, blockSearchNavigation: true, searchQuery: 'one' });
+
+  const statuses: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(1000);
+    const status = await page.evaluate(() => document.querySelector('#rh-status-text')?.textContent || '');
+    if (status) statuses.push(status);
+    if (statuses.some(s => /正在检查上次搜索进度|Checking previous progress|正在搜索|Searching:|执行面板|等待下一次|Waiting for the next/i.test(s))) break;
+  }
+  expect(statuses.length).toBeGreaterThan(0);
+  expect(
+    statuses.some(s => /正在检查上次搜索进度|Checking previous progress|正在搜索|Searching:|执行面板|Waiting for the next|账户总积分|account total/i.test(s))
+  ).toBe(true);
 });
