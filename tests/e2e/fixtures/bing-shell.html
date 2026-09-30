@@ -69,6 +69,7 @@
       const unconfiguredEnglishPromotion = params.get('unconfiguredEnglishPromotion') === '1';
       const currentRewardsCards = params.get('currentRewardsCards') === '1';
       const spaSearch = params.get('spaSearch') === '1';
+      const accountPoints = Number(params.get('accountPoints') || '50000');
       const firstPromotionTitle = unconfiguredEnglishPromotion
         ? 'Plan your future'
         : (unconfiguredPromotion ? '规划你的未来' : '查找住宿地点');
@@ -100,6 +101,10 @@
         <html>
           <body>
             <section aria-label="Rewards panel">
+              <div class="account-total">
+                <span class="text-sectionHeader">${accountPoints.toLocaleString('en-US')}</span>
+                <span class="text-labelControl">points</span>
+              </div>
               ${legacyProgressMarkup}
 
               <a class="rw-card" aria-label="Daily poll - 10 points" href="/search?q=https%3A%2F%2Fwww.bing.com%2Frewards">
@@ -190,6 +195,10 @@
           <body>
             <main id="app" aria-label="Microsoft Rewards">
               <button type="button" data-flyout-close aria-label="Close">Close</button>
+              <div class="account-total">
+                <span class="text-sectionHeader">${accountPoints.toLocaleString('en-US')}</span>
+                <span class="text-labelControl">points</span>
+              </div>
               <section class="flyout_exb_card">
                 ${modernProgressMarkup}
                 <div id="exb-activityChecklist">
@@ -273,7 +282,7 @@
         const iframe = document.createElement('iframe');
         if (modernLayout) {
           iframe.src = vNextLayout
-            ? `https://rewards.bing.com/flyout?channel=bingflyout&pointsComplete=${pointsComplete ? '1' : '0'}`
+            ? `https://rewards.bing.com/flyout?channel=bingflyout&pointsComplete=${pointsComplete ? '1' : '0'}&accountPoints=${accountPoints}`
             : '/rewards/panelflyout?channel=bing';
           iframe.title = 'Microsoft Rewards, expanded';
         } else {

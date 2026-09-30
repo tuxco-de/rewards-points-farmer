@@ -10,13 +10,7 @@ const userscriptPath = path.resolve(__dirname, '../../dist/rewards-points-farmer
 
 type SavedState = {
   isSearching: boolean;
-  currentProgress: {
-    current: number;
-    total: number;
-    lastChecked: number;
-    completed: boolean;
-    noProgressCount: number;
-  };
+  currentProgress: AccountProgress;
   usedSearchTerms?: string[];
   mainPageSearchTerms?: string[];
   iframeSearchTerms?: string[];
@@ -33,10 +27,37 @@ type SavedState = {
   attemptedTasks?: string[];
 };
 
+type AccountProgress = {
+  mode: 'account-total';
+  initialized: boolean;
+  current: number;
+  baseline: number;
+  earned: number;
+  lastChecked: number;
+  lastAttemptChecked: number;
+  completed: boolean;
+  noProgressCount: number;
+};
+
+function accountProgress(overrides: Partial<AccountProgress> = {}): AccountProgress {
+  return {
+    mode: 'account-total',
+    initialized: true,
+    current: 50_000,
+    baseline: 50_000,
+    earned: 0,
+    lastChecked: 50_000,
+    lastAttemptChecked: 0,
+    completed: false,
+    noProgressCount: 0,
+    ...overrides,
+  };
+}
+
 async function loadUserscriptFixture(
   page: Page,
   savedState?: SavedState,
-  options: { worker?: boolean; pointsComplete?: boolean; menuApi?: boolean; modernLayout?: boolean; vNextLayout?: boolean; rejectMouseEventView?: boolean; wrappedInputValue?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean; unconfiguredPromotion?: boolean; unconfiguredEnglishPromotion?: boolean; currentRewardsCards?: boolean; spaSearch?: boolean } = {}
+  options: { worker?: boolean; pointsComplete?: boolean; accountPoints?: number; menuApi?: boolean; modernLayout?: boolean; vNextLayout?: boolean; rejectMouseEventView?: boolean; wrappedInputValue?: boolean; englishSummary?: boolean; completedChineseSummary?: boolean; hundredTotal?: boolean; completedCard?: boolean; reactiveAutocomplete?: boolean; unconfiguredPromotion?: boolean; unconfiguredEnglishPromotion?: boolean; currentRewardsCards?: boolean; spaSearch?: boolean } = {}
 ) {
   if (savedState) {
     await page.context().addInitScript(state => {
@@ -120,6 +141,7 @@ async function loadUserscriptFixture(
     : fixtureUrl);
   if (options.worker) url.searchParams.set('rewards_helper_worker', '1');
   if (options.pointsComplete) url.searchParams.set('pointsComplete', '1');
+  if (options.accountPoints !== undefined) url.searchParams.set('accountPoints', String(options.accountPoints));
   if (options.modernLayout) url.searchParams.set('modernLayout', '1');
   if (options.vNextLayout) url.searchParams.set('vNextLayout', '1');
   if (options.englishSummary) url.searchParams.set('englishSummary', '1');
@@ -139,7 +161,7 @@ test('shows the collapsed badge and opens the control panel from the badge', asy
   await loadUserscriptFixture(page);
 
   await expect(page.locator('#rh-badge')).toBeVisible();
-  await expect(page.locator('#rh-badge-text')).toHaveText(/Initializing|0\/0/);
+  await expect(page.locator('#rh-badge-text')).toHaveText(/Initializing|0 \/ 0|Reading total points|正在读取总积分/);
   await expect(page.locator('#rh-dropdown')).toBeHidden();
 
   await page.locator('#rh-badge').click();
@@ -331,7 +353,7 @@ test('injects the userscript UI and parses the rewards flyout', async ({ page })
   await loadUserscriptFixture(page, undefined, { worker: true });
 
   await expect(page.locator('#rh-badge')).toBeVisible();
-  await expect(page.locator('#rh-progress-text')).toHaveText('0/90', { timeout: 6_000 });
+  await expect(page.locator('#rh-progress-text')).toHaveText('50,000 pts', { timeout: 6_000 });
   await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');
   await expect(page.locator('#rh-tasks-list')).toContainText('Daily poll');
   await expect(page.locator('#rh-tasks-list')).toContainText('NASA Artemis mission');
@@ -341,46 +363,41 @@ test('injects the userscript UI and parses the rewards flyout', async ({ page })
   expect(queue.map((task: { searchTerms: string[] }) => task.searchTerms)).toEqual([[], []]);
 });
 
-test('prefers the multiline English earned summary over an unrelated 80-point fraction', async ({ page }) => {
+test('ignores the legacy daily earned summary and reads the account total', async ({ page }) => {
   await loadUserscriptFixture(page, undefined, { worker: true, englishSummary: true });
 
-  await expect(page.locator('#rh-progress-text')).toHaveText('80/200', { timeout: 6_000 });
-  await expect(page.locator('#rh-progress-fill')).toHaveJSProperty('style.width', '40%');
+  await expect(page.locator('#rh-progress-text')).toHaveText('50,000 pts', { timeout: 6_000 });
+  await expect(page.locator('#rh-progress-fill')).toHaveJSProperty('style.width', '0%');
   expect(await page.evaluate(() => (window as any).__e2e_getExecutionPhase())).toBe('points');
 });
 
-test('uses the completed Chinese reward-points summary instead of an unrelated search fraction', async ({ page }) => {
+test('does not treat the removed daily points cap as account completion', async ({ page }) => {
   await loadUserscriptFixture(page, undefined, {
     worker: true,
     modernLayout: true,
     completedChineseSummary: true,
   });
 
-  await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
+  await expect(page.locator('#rh-progress-text')).toHaveText('50,000 pts', { timeout: 6_000 });
   expect(await page.evaluate(() => (window as any).__e2e_getCurrentProgress())).toMatchObject({
-    current: 200,
-    total: 200,
-    completed: true,
+    mode: 'account-total',
+    current: 50_000,
+    baseline: 50_000,
+    completed: false,
   });
 });
 
-test('accepts a 100-point search total', async ({ page }) => {
-  await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true, hundredTotal: true });
+test('reads a changed account total independently of the old daily cap', async ({ page }) => {
+  await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true, hundredTotal: true, accountPoints: 50_233 });
 
-  await expect(page.locator('#rh-progress-text')).toHaveText('0/100', { timeout: 6_000 });
+  await expect(page.locator('#rh-progress-text')).toHaveText('50,233 pts', { timeout: 6_000 });
   expect(await page.evaluate(() => (window as any).__e2e_getExecutionPhase())).toBe('points');
 });
 
 test('counts no progress when a completed search attempt still leaves progress at zero', async ({ page }) => {
   await loadUserscriptFixture(page, {
     isSearching: true,
-    currentProgress: {
-      current: 0,
-      total: 200,
-      lastChecked: 0,
-      completed: false,
-      noProgressCount: 0,
-    },
+    currentProgress: accountProgress(),
     totalSearchAttempts: 1,
     usedSearchTerms: ['search attempt without points'],
     dailyTasksQueue: [],
@@ -407,7 +424,7 @@ test('parses the redesigned Rewards entry, progress and promo cards', async ({ p
   await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true, rejectMouseEventView: true });
 
   await expect(page.locator('#id_rh_w')).toHaveAttribute('aria-controls', 'rewid-f');
-  await expect(page.locator('#rh-progress-text')).toHaveText('0/200', { timeout: 6_000 });
+  await expect(page.locator('#rh-progress-text')).toHaveText('50,000 pts', { timeout: 6_000 });
   await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');
   await expect(page.locator('.rh-task-item').first()).toContainText('查找住宿地点');
   await expect(page.locator('.rh-task-item').nth(1)).toContainText('NASA Artemis mission');
@@ -432,8 +449,8 @@ test('parses and closes the cross-origin vNext Rewards side panel', async ({ pag
     vNextLayout: true,
   });
 
-  await expect(page.locator('#rh-progress-text')).toHaveText('80/180', { timeout: 8_000 });
-  await expect(page.locator('#rh-tasks-count')).toHaveText('(1/7)');
+  await expect(page.locator('#rh-progress-text')).toHaveText('50,000 pts', { timeout: 8_000 });
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(4/10)');
   await expect(page.locator('#rh-tasks-list')).toContainText('我附近即将举行的活动');
   await expect(page.locator('#rh-tasks-list')).toContainText('焕新您的日常');
   await expect(page.locator('#rh-tasks-list')).toContainText('查看选项');
@@ -466,14 +483,19 @@ test('parses and closes the cross-origin vNext Rewards side panel', async ({ pag
 });
 
 test('clicks a vNext activity through the cross-origin Rewards bridge', async ({ page }) => {
-  await loadUserscriptFixture(page, undefined, {
+  await loadUserscriptFixture(page, {
+    isSearching: false,
+    currentProgress: accountProgress({ completed: true }),
+    dailyTasksQueue: [],
+    attemptedTasks: [],
+  }, {
     worker: true,
     modernLayout: true,
     vNextLayout: true,
     pointsComplete: true,
   });
 
-  await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 8_000 });
+  await expect(page.locator('#rh-progress-text')).toHaveText('✅ 50,000 pts', { timeout: 8_000 });
   await page.evaluate(() => (window as any).startRewardsTask());
   try {
     await expect.poll(
@@ -591,34 +613,29 @@ test('uses English segmentation for an unconfigured English search promotion', a
 test.describe('Rewards DOM value integration matrix', () => {
   const scenarios = [
     {
-      name: 'legacy numeric progress',
+      name: 'legacy panel account total',
       options: { worker: true },
-      expected: { current: 0, total: 90, completed: false },
+      expected: { mode: 'account-total', current: 50_000, baseline: 50_000, earned: 0, completed: false },
     },
     {
-      name: 'legacy multiline English summary',
-      options: { worker: true, englishSummary: true },
-      expected: { current: 80, total: 200, completed: false },
+      name: 'legacy panel with changed account total',
+      options: { worker: true, accountPoints: 50_233 },
+      expected: { mode: 'account-total', current: 50_233, baseline: 50_233, earned: 0, completed: false },
     },
     {
-      name: 'modern 200-point progress',
+      name: 'modern panel account total',
       options: { worker: true, modernLayout: true },
-      expected: { current: 0, total: 200, completed: false },
+      expected: { mode: 'account-total', current: 50_000, baseline: 50_000, earned: 0, completed: false },
     },
     {
-      name: 'modern 100-point progress',
-      options: { worker: true, modernLayout: true, hundredTotal: true },
-      expected: { current: 0, total: 100, completed: false },
+      name: 'modern panel ignores a 100-point daily cap',
+      options: { worker: true, modernLayout: true, hundredTotal: true, accountPoints: 50_100 },
+      expected: { mode: 'account-total', current: 50_100, baseline: 50_100, earned: 0, completed: false },
     },
     {
-      name: 'modern completed numeric progress',
-      options: { worker: true, modernLayout: true, pointsComplete: true },
-      expected: { current: 200, total: 200, completed: true },
-    },
-    {
-      name: 'modern completed Chinese reward-points summary',
-      options: { worker: true, modernLayout: true, completedChineseSummary: true },
-      expected: { current: 200, total: 200, completed: true },
+      name: 'cross-origin vNext panel account total',
+      options: { worker: true, modernLayout: true, vNextLayout: true, accountPoints: 50_321 },
+      expected: { mode: 'account-total', current: 50_321, baseline: 50_321, earned: 0, completed: false },
     },
   ] as const;
 
@@ -635,10 +652,15 @@ test.describe('Rewards DOM value integration matrix', () => {
   test('collects progress, cards and search terms in one parsed snapshot', async ({ page }) => {
     await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true });
 
-    await expect(page.locator('#rh-progress-text')).toHaveText('0/200', { timeout: 6_000 });
+    await expect(page.locator('#rh-progress-text')).toHaveText('50,000 pts', { timeout: 6_000 });
     const snapshot = await page.evaluate(() => (window as any).__e2e_getParsedSnapshot());
 
-    expect(snapshot.currentProgress).toMatchObject({ current: 0, total: 200, completed: false });
+    expect(snapshot.currentProgress).toMatchObject({
+      mode: 'account-total',
+      current: 50_000,
+      baseline: 50_000,
+      completed: false,
+    });
     expect(snapshot.dailyTasksData).toEqual([
       { name: '查找住宿地点', status: '未完成' },
       { name: 'NASA Artemis mission', status: '未完成' },
@@ -706,7 +728,7 @@ test('renders parsed task state in the dropdown task list', async ({ page }) => 
 
   await page.locator('#rh-badge').click();
   await expect(page.locator('#rh-dropdown')).toBeVisible();
-  await expect(page.locator('#rh-progress-text')).toHaveText('0/90', { timeout: 6_000 });
+  await expect(page.locator('#rh-progress-text')).toHaveText('50,000 pts', { timeout: 6_000 });
   await expect(page.locator('#rh-progress-fill')).toHaveJSProperty('style.width', '0%');
   await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');
   await expect(page.locator('.rh-task-item')).toHaveCount(2);
@@ -718,13 +740,7 @@ test('renders parsed task state in the dropdown task list', async ({ page }) => 
 test('defers queued card keywords while search points are incomplete', async ({ page }) => {
   await loadUserscriptFixture(page, {
     isSearching: true,
-    currentProgress: {
-      current: 12,
-      total: 90,
-      lastChecked: 12,
-      completed: false,
-      noProgressCount: 0,
-    },
+    currentProgress: accountProgress({ completed: false }),
     usedSearchTerms: [],
     mainPageSearchTerms: ['points phase search term'],
     dailyTasksQueue: [{
@@ -742,7 +758,7 @@ test('defers queued card keywords while search points are incomplete', async ({ 
     attemptedTasks: [],
   });
 
-  await expect(page.locator('#rh-progress-text')).toHaveText('12/90');
+  await expect(page.locator('#rh-progress-text')).toHaveText('50,000 pts');
   expect(await page.evaluate(() => (window as any).__e2e_getExecutionPhase())).toBe('points');
   const term = await page.evaluate(() => (window as any).__e2e_getSearchTerm());
   expect(term).toBe('points phase search term');
@@ -751,13 +767,7 @@ test('defers queued card keywords while search points are incomplete', async ({ 
 test('uses the next fixed promotion term after the previous term was attempted', async ({ page }) => {
   await loadUserscriptFixture(page, {
     isSearching: true,
-    currentProgress: {
-      current: 90,
-      total: 90,
-      lastChecked: 90,
-      completed: true,
-      noProgressCount: 0,
-    },
+    currentProgress: accountProgress({ completed: true }),
     usedSearchTerms: [],
     mainPageSearchTerms: ['points phase search term'],
     dailyTasksQueue: [{
@@ -783,13 +793,7 @@ test('uses the next fixed promotion term after the previous term was attempted',
 test('does not fall back to random terms after a promotion exhausts its fixed terms', async ({ page }) => {
   await loadUserscriptFixture(page, {
     isSearching: true,
-    currentProgress: {
-      current: 90,
-      total: 90,
-      lastChecked: 90,
-      completed: true,
-      noProgressCount: 0,
-    },
+    currentProgress: accountProgress({ completed: true }),
     usedSearchTerms: [],
     mainPageSearchTerms: ['must not be used'],
     dailyTasksQueue: [{
@@ -811,13 +815,7 @@ test('does not fall back to random terms after a promotion exhausts its fixed te
 test('finishes immediately and renders skipped state when the last queued card reaches its attempt limit', async ({ page }) => {
   await loadUserscriptFixture(page, {
     isSearching: false,
-    currentProgress: {
-      current: 200,
-      total: 200,
-      lastChecked: 200,
-      completed: true,
-      noProgressCount: 0,
-    },
+    currentProgress: accountProgress({ completed: true }),
     usedSearchTerms: [],
     dailyTasksQueue: [{
       url: '/search?q=https%3A%2F%2Fwww.bing.com%2Frewards',
@@ -836,7 +834,7 @@ test('finishes immediately and renders skipped state when the last queued card r
     completedCard: true,
   });
 
-  await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
+  await expect(page.locator('#rh-progress-text')).toHaveText('✅ 50,000 pts', { timeout: 6_000 });
   await expect(page.locator('#rh-badge-text')).toHaveText('📋 1/2');
   await page.evaluate(() => (window as any).startRewardsTask());
 
@@ -855,13 +853,7 @@ test('continues with the next card after a completed-points card reaches its att
   test.setTimeout(20_000);
   await loadUserscriptFixture(page, {
     isSearching: false,
-    currentProgress: {
-      current: 200,
-      total: 200,
-      lastChecked: 200,
-      completed: true,
-      noProgressCount: 2,
-    },
+    currentProgress: accountProgress({ completed: true, noProgressCount: 2 }),
     usedSearchTerms: [],
     totalSearchAttempts: 3,
     dailyTasksQueue: [
@@ -906,9 +898,15 @@ test('continues with the next card after a completed-points card reaches its att
 
 test('executes a search promotion with its first fixed term when the card query is a URL', async ({ page }) => {
   test.setTimeout(45_000);
-  await loadUserscriptFixture(page, undefined, { worker: true, pointsComplete: true, modernLayout: true, rejectMouseEventView: true });
+  await loadUserscriptFixture(page, {
+    isSearching: false,
+    currentProgress: accountProgress({ completed: true }),
+    usedSearchTerms: [],
+    dailyTasksQueue: [],
+    attemptedTasks: [],
+  }, { worker: true, pointsComplete: true, modernLayout: true, rejectMouseEventView: true });
 
-  await expect(page.locator('#rh-progress-text')).toHaveText('✅ Done', { timeout: 6_000 });
+  await expect(page.locator('#rh-progress-text')).toHaveText('✅ 50,000 pts', { timeout: 6_000 });
   await expect(page.locator('#rh-badge-text')).toHaveText('📋 0/2');
   await expect(page.locator('#rh-tasks-count')).toHaveText('(0/2)');
 
@@ -964,21 +962,15 @@ test('continues the task loop after a same-page SPA search update', async ({ pag
 test('restores saved in-progress UI state from localStorage', async ({ page }) => {
   await loadUserscriptFixture(page, {
     isSearching: true,
-    currentProgress: {
-      current: 45,
-      total: 90,
-      lastChecked: 45,
-      completed: false,
-      noProgressCount: 0,
-    },
+    currentProgress: accountProgress({ completed: false }),
     usedSearchTerms: ['existing term'],
     dailyTasksQueue: [],
     attemptedTasks: [],
   });
 
-  await expect(page.locator('#rh-progress-text')).toHaveText('45/90');
-  await expect(page.locator('#rh-badge-text')).toHaveText('45/90');
-  await expect(page.locator('#rh-progress-fill')).toHaveJSProperty('style.width', '50%');
+  await expect(page.locator('#rh-progress-text')).toHaveText('50,000 pts');
+  await expect(page.locator('#rh-badge-text')).toHaveText('50,000 pts');
+  await expect(page.locator('#rh-progress-fill')).toHaveJSProperty('style.width', '0%');
   await expect(page.locator('#rh-start-btn')).toContainText('Stop Farming');
   await expect(page.locator('#rh-badge')).toHaveClass(/searching/);
   expect(await page.evaluate(() => (window as any).__e2e_isDedicatedWorker())).toBe(false);

@@ -17,11 +17,7 @@ interface EarnedProgress {
 export interface RewardsPanelSnapshot {
     parsed: boolean;
     panelParsed: boolean;
-    currentProgress: {
-        current: number;
-        total: number;
-        completed: boolean;
-    } | null;
+    accountTotalPoints: number | null;
     dailyTasksData: DailyTaskDisplayItem[];
     dailyTasksQueue: DailyTask[];
     iframeSearchTerms: string[];
@@ -174,14 +170,25 @@ export function getSearchTermsFromMainDoc() {
 
 // ========== Shared card parsing helpers ==========
 
+const VNEXT_TASK_SECTION_SELECTOR = '#dailyset, #exploreonbing, #moreactivities';
+
+function isVNextTaskAction(card: Element): boolean {
+    return Boolean(card.closest(VNEXT_TASK_SECTION_SELECTOR)) && (
+        card.matches('a[href]') || (
+            card.matches('[role="link"]') &&
+            (card.hasAttribute('data-react-aria-pressable') || card.hasAttribute('tabindex'))
+        )
+    );
+}
+
 function discoverCards(doc: Document): Set<Element> {
     const cardsArray = new Set<Element>();
     
     doc.querySelectorAll([
         '#exb-activityChecklist .promo_cont',
-        '#dailyset a[href]',
-        '#exploreonbing [role="link"]',
-        '#moreactivities a[href]',
+        '#dailyset a[href], #dailyset [role="link"]',
+        '#exploreonbing a[href], #exploreonbing [role="link"]',
+        '#moreactivities a[href], #moreactivities [role="link"]',
         'section[id*="activit" i] a[href]',
         'div[aria-label*="Offer" i]',
         '[data-task-id]',
@@ -200,7 +207,7 @@ function discoverCards(doc: Document): Set<Element> {
             if (/^\+\s*\d+$/.test(t)) {
                 let parent = node.parentElement;
                 if (parent) {
-                    let card = parent.closest('a, li, [role="button"], [class*="card"], [class*="item"], .promo_cont, div[tabindex]');
+                    let card = parent.closest('a, li, [role="link"], [role="button"], [class*="card"], [class*="item"], .promo_cont, div[tabindex]');
                     if (card) cardsArray.add(card);
                 }
             }
@@ -216,17 +223,15 @@ export function isRewardsTaskCard(card: Element): boolean {
     const link = card.tagName.toLowerCase() === 'a' ? card : card.querySelector('a');
     const href = link ? (link.getAttribute('href') || '').trim() : '';
     const ariaLabel = card.getAttribute('aria-label') || '';
-    const isVNextPressableLink = card.matches('[role="link"]') &&
-        Boolean(card.closest('#exploreonbing')) &&
-        (card.hasAttribute('data-react-aria-pressable') || card.hasAttribute('tabindex'));
+    const isVNextAction = isVNextTaskAction(card);
 
-    if (!href && !isVNextPressableLink) {
+    if (!href && !isVNextAction) {
         console.log(`[RewardsHelper] 剔除卡片 (缺少任务链接): aria="${ariaLabel}"`);
         return false;
     }
 
     const isChecklistTask = Boolean(card.closest('#exb-activityChecklist'));
-    const isVNextActivity = Boolean(card.closest('#dailyset, #exploreonbing, #moreactivities, section[id*="activit" i]'));
+    const isVNextActivity = Boolean(card.closest(`${VNEXT_TASK_SECTION_SELECTOR}, section[id*="activit" i]`));
     const hasTrustedTaskShape = isChecklistTask || card.matches(
         '#exclusive_promo_cont, [data-task-id], .promo_cont.slim, .rw-card, .explore-card, .task-card'
     ) || isVNextActivity;
@@ -234,10 +239,13 @@ export function isRewardsTaskCard(card: Element): boolean {
     const normalizedHref = href.toLowerCase();
     const isRelativeBingPath = normalizedHref.startsWith('/') && !normalizedHref.startsWith('//');
     let parsedUrl: URL | null = null;
+    const points = getCardPoints(card);
     if (href && !isRelativeBingPath) {
         try {
             parsedUrl = new URL(normalizedHref, window.location.href);
-            if ((parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') || !isBingHost(parsedUrl.hostname)) {
+            const isHttp = parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
+            const isTrustedExternalTask = isVNextActivity && points > 0;
+            if (!isHttp || (!isBingHost(parsedUrl.hostname) && !isTrustedExternalTask)) {
                 console.log(`[RewardsHelper] 剔除卡片 (非 Bing 链接): aria="${ariaLabel}", href="${normalizedHref.substring(0, 40)}"`);
                 return false;
             }
@@ -254,15 +262,14 @@ export function isRewardsTaskCard(card: Element): boolean {
         return false;
     }
 
-    const points = getCardPoints(card);
-    const isPointBackedBingActivity = points > 0 && (
+    const isPointBackedActivity = points > 0 && (
         isRelativeBingPath || parsedUrl?.hostname.toLowerCase() !== 'rewards.bing.com'
     );
 
     // The live flyout now renders real daily activities as ordinary
     // `.promo_cont` elements. Keep point-bearing Bing activities, while still
     // excluding Rewards referral/redeem promos and point-free summaries.
-    if (card.matches('.promo_cont') && !hasTrustedTaskShape && !isPointBackedBingActivity) {
+    if (card.matches('.promo_cont') && !hasTrustedTaskShape && !isPointBackedActivity) {
         console.log(`[RewardsHelper] 剔除卡片 (普通推广卡): aria="${ariaLabel}"`);
         return false;
     }
@@ -628,8 +635,7 @@ function getCardDisplayName(card: Element, idx: number): string {
 function createDailyTaskFromCard(card: Element, idx: number, status: string): DailyTask | null {
     const linkElem = card.tagName.toLowerCase() === 'a' ? card : card.querySelector('a');
     const href = linkElem ? (linkElem.getAttribute('href') || '') : '';
-    const isVNextPressableLink = card.matches('[role="link"]') && Boolean(card.closest('#exploreonbing'));
-    if (!href && !isVNextPressableLink) return null;
+    if (!href && !isVNextTaskAction(card)) return null;
 
     const ariaLabel = card.getAttribute('aria-label') || '';
     const title = getCardDisplayName(card, idx);
@@ -699,26 +705,103 @@ function addIframeSearchTerms(items: any[]): number {
     return terms.length;
 }
 
-let lastParsedPanelProgress: RewardsPanelSnapshot['currentProgress'] = null;
+let lastParsedAccountTotalPoints: number | null = null;
 
-function getScopedProgressContext(element: Element, fallbackDepth: number): string {
-    const section = element.closest('section, [role="region"]');
-    if (section) {
-        return `${section.getAttribute('aria-label') || ''} ${section.textContent || ''}`.toLowerCase();
+export function parseAccountTotalPoints(targetDoc: Document): number | null {
+    const root = targetDoc.querySelector('main') || targetDoc.body;
+    if (!root) return null;
+
+    const numericElements = Array.from(root.querySelectorAll('span, div')).filter(element =>
+        element.children.length === 0 && /^\s*\d[\d\s,.]*\s*$/.test(element.textContent || '')
+    );
+    for (const element of numericElements) {
+        const parent = element.parentElement;
+        if (!parent) continue;
+        const siblings = Array.from(parent.children);
+        const hasPointsUnit = siblings.some(sibling =>
+            sibling !== element && /^(?:points?|pts|分)$/i.test((sibling.textContent || '').trim())
+        );
+        if (!hasPointsUnit) continue;
+
+        const value = Number((element.textContent || '').replace(/\D/g, ''));
+        if (Number.isFinite(value) && value >= 0) return value;
+    }
+    return null;
+}
+
+export function applyAccountTotalPoints(totalPoints: number) {
+    if (!Number.isFinite(totalPoints) || totalPoints < 0) return;
+
+    const progress = store.currentProgress;
+    const currentAttempt = store.searchState.totalSearchAttempts;
+    if (!progress.initialized) {
+        progress.initialized = true;
+        progress.current = totalPoints;
+        progress.baseline = totalPoints;
+        progress.earned = 0;
+        progress.lastChecked = totalPoints;
+        progress.lastAttemptChecked = currentAttempt;
+        progress.noProgressCount = 0;
+        console.log(`[RewardsHelper] 已记录账户总积分基线: ${totalPoints}`);
+        updateProgressUI();
+        return;
     }
 
-    let context = element.parentElement;
-    let contextText = element.textContent || '';
-    for (let depth = 0; context && depth < fallbackDepth; depth++) {
-        contextText += ` ${context.getAttribute('aria-label') || ''} ${context.textContent || ''}`;
-        context = context.parentElement;
+    if (totalPoints < progress.lastChecked) {
+        // A redemption or an out-of-band account adjustment is not a failed
+        // search. Start a fresh baseline instead of exhausting retry budget.
+        progress.baseline = totalPoints;
+        progress.earned = 0;
+        progress.noProgressCount = 0;
+        progress.lastAttemptChecked = currentAttempt;
+        store.searchState.restCycles = 0;
+    } else if (
+        store.isSearching &&
+        !progress.completed &&
+        currentAttempt > progress.lastAttemptChecked
+    ) {
+        if (totalPoints > progress.lastChecked) {
+            console.log(`[RewardsHelper] 账户总积分增加: ${progress.lastChecked} -> ${totalPoints}`);
+            progress.noProgressCount = 0;
+            store.searchState.restCycles = 0;
+        } else {
+            progress.noProgressCount++;
+            console.log(`[RewardsHelper] 账户总积分未变化: ${totalPoints}，已连续 ${progress.noProgressCount} 次`);
+            if (progress.noProgressCount >= config.maxNoProgressCount) {
+                progress.completed = true;
+                store.searchState.needRest = false;
+                console.log(`[RewardsHelper] 连续 ${config.maxNoProgressCount} 次搜索后总积分未变化，搜索积分阶段完成`);
+            }
+        }
+        progress.lastAttemptChecked = currentAttempt;
     }
-    return contextText.toLowerCase();
+
+    progress.current = totalPoints;
+    progress.lastChecked = totalPoints;
+    progress.earned = Math.max(0, totalPoints - progress.baseline);
+    updateProgressUI();
+}
+
+export function recordMissingAccountTotalPoints() {
+    const progress = store.currentProgress;
+    const currentAttempt = store.searchState.totalSearchAttempts;
+    if (!store.isSearching || progress.completed || progress.initialized) return;
+    if (currentAttempt <= progress.lastAttemptChecked) return;
+
+    progress.noProgressCount++;
+    progress.lastAttemptChecked = currentAttempt;
+    console.log(`[RewardsHelper] 未能读取账户总积分，已连续 ${progress.noProgressCount} 次`);
+    if (progress.noProgressCount >= config.maxNoProgressCount) {
+        progress.completed = true;
+        store.searchState.needRest = false;
+        console.log(`[RewardsHelper] 连续 ${config.maxNoProgressCount} 次无法读取账户总积分，搜索积分阶段完成`);
+    }
+    updateProgressUI();
 }
 
 export function getDataFromPanel() {
     store.searchState.panelParsed = false;
-    lastParsedPanelProgress = null;
+    lastParsedAccountTotalPoints = null;
     let targetDoc = document;
     let isIframe = false;
     let iframeWin: (Window & Record<string, any>) | null = window;
@@ -797,128 +880,17 @@ export function getDataFromPanel() {
             store.dailyTasksData = tasks;
         })();
 
-        let progressFound = false;
-        let currentBestProgress: any = null;
-        const allEarnedText = targetDoc.body ? (targetDoc.body.innerText || targetDoc.body.textContent || '') : '';
-        const earnedProgress = parseEarnedProgressText(allEarnedText);
-
-        let potentialProgresses: any[] = [];
-        const allElements = targetDoc.querySelectorAll('span, div, p');
-        for (let el of Array.from(allElements)) {
-            const txt = (el.textContent || '').trim();
-            if (txt.length > 0 && txt.length < 50) {
-                const matches = txt.match(/(\d+)\s*(?:\/|of|个，共)\s*(\d+)/i);
-                if (matches) {
-                    const cur = parseInt(matches[1], 10);
-                    const max = parseInt(matches[2], 10);
-                    if (max >= 12 && max <= 1000 && !txt.toLowerCase().includes('min') && !txt.toLowerCase().includes('level') && !txt.includes('级')) {
-                        
-                        const contextText = getScopedProgressContext(el, 3);
-
-                        if (contextText.includes('浏览') || contextText.includes('browse') || 
-                            contextText.includes('阅读') || contextText.includes('read')) {
-                            continue;
-                        }
-
-                        const isSearch = contextText.includes('搜索') || contextText.includes('search') || contextText.includes('pc');
-                        potentialProgresses.push({ current: cur, max: max, isSearch, source: 'text' });
-                    }
-                }
-            }
-        }
-
-        targetDoc.querySelectorAll('[role="progressbar"][aria-valuenow][aria-valuemax]').forEach(element => {
-            const current = Number(element.getAttribute('aria-valuenow'));
-            const max = Number(element.getAttribute('aria-valuemax'));
-            if (!Number.isFinite(current) || !Number.isFinite(max) || max < 12 || max > 1000) return;
-
-            const normalizedContext = `${element.getAttribute('aria-label') || ''} ${getScopedProgressContext(element, 4)}`.toLowerCase();
-            if (/\b(?:browse|read)\b|浏览|阅读/.test(normalizedContext)) return;
-            potentialProgresses.push({
-                current,
-                max,
-                isSearch: /\b(?:search|pc)\b|搜索/.test(normalizedContext),
-                source: 'progressbar'
-            });
-        });
-
-        if (potentialProgresses.length > 0) {
-            let best = null;
-            const searchProgresses = potentialProgresses.filter(p => p.isSearch);
-            if (searchProgresses.length > 0) {
-                best = searchProgresses.reduce((prev, curr) => (prev.max > curr.max) ? prev : curr);
-            } else {
-                // The new flyout renders both the real points fraction (80/180)
-                // and an accessibility percentage progressbar (44.4/100) in the
-                // same section. Prefer an explicit fraction even when a region's
-                // daily total is below 100, then use an ARIA bar as the fallback.
-                const textProgresses = potentialProgresses.filter(p => p.source === 'text');
-                const candidatePool = textProgresses.length > 0 ? textProgresses : potentialProgresses;
-                best = candidatePool.reduce((prev, curr) => (prev.max > curr.max) ? prev : curr);
-            }
-            currentBestProgress = best;
-        }
-
-        // The Rewards flyout can show an English multiline summary such as
-        // "You earned 80 points already ... earn up to 200 points" alongside
-        // unrelated 80-point fractions. The explicit summary is authoritative.
-        if (earnedProgress) {
-            console.log(`匹配到积分摘要规则: ${earnedProgress.rule}`);
-            currentBestProgress = {
-                current: earnedProgress.current,
-                max: earnedProgress.total,
-                completed: earnedProgress.completed,
-                rule: earnedProgress.rule
-            };
-        }
-
-        if (currentBestProgress) {
-            const current = currentBestProgress.current;
-            store.currentProgress.total = currentBestProgress.max;
-            console.log('搜索进度: ' + current + '/' + store.currentProgress.total);
-
-            const progressCompleted = typeof currentBestProgress.completed === 'boolean'
-                ? currentBestProgress.completed
-                : current >= store.currentProgress.total;
-            const hasAttemptedSearch = store.searchState.totalSearchAttempts > 0;
-            if (hasAttemptedSearch && !progressCompleted && current <= store.currentProgress.lastChecked && store.isSearching) {
-                console.log(`进度未增加: ${current} <= ${store.currentProgress.lastChecked}，已连续 ${store.currentProgress.noProgressCount + 1} 次未增加`);
-                store.currentProgress.noProgressCount++;
-
-                if (store.currentProgress.noProgressCount >= config.maxNoProgressCount) {
-                    store.searchState.needRest = true;
-                    console.log(`达到最大容错次数 ${config.maxNoProgressCount}，需要休息`);
-                }
-            } else if (current > store.currentProgress.lastChecked) {
-                console.log(`进度增加: ${current} > ${store.currentProgress.lastChecked}，重置未增加计数`);
-                store.currentProgress.noProgressCount = 0;
-                store.searchState.restCycles = 0;
-            }
-
-            store.currentProgress.current = current;
-            store.currentProgress.lastChecked = current;
-
-            store.currentProgress.completed = progressCompleted;
-            if (store.currentProgress.completed) {
-                store.currentProgress.noProgressCount = 0;
-                store.searchState.needRest = false;
-                console.log(`进度数字表明任务已完成: ${current}/${store.currentProgress.total}`);
-            }
-
-            lastParsedPanelProgress = {
-                current: store.currentProgress.current,
-                total: store.currentProgress.total,
-                completed: store.currentProgress.completed
-            };
-
-            updateProgressUI();
-
-            if (store.isSearching) {
-                store.saveState();
-            }
-            progressFound = true;
+        const accountTotalPoints = parseAccountTotalPoints(targetDoc);
+        const progressFound = accountTotalPoints !== null;
+        if (accountTotalPoints !== null) {
+            lastParsedAccountTotalPoints = accountTotalPoints;
+            if (window === window.top) applyAccountTotalPoints(accountTotalPoints);
+            console.log(`[RewardsHelper] 账户总积分: ${accountTotalPoints}`);
+            if (store.isSearching) store.saveState();
         } else {
-            console.log('未找到进度元素，检查完成提示');
+            console.log('[RewardsHelper] 未找到账户总积分');
+            if (window === window.top) recordMissingAccountTotalPoints();
+            if (store.isSearching) store.saveState();
         }
 
         let iframeTermsFound = false;
@@ -1016,7 +988,7 @@ function createRewardsPanelSnapshot(parsed: boolean): RewardsPanelSnapshot {
     return {
         parsed,
         panelParsed: store.searchState.panelParsed,
-        currentProgress: lastParsedPanelProgress ? { ...lastParsedPanelProgress } : null,
+        accountTotalPoints: lastParsedAccountTotalPoints,
         dailyTasksData: store.dailyTasksData.map(task => ({ ...task })),
         dailyTasksQueue: store.searchState.dailyTasksQueue.map(task => ({
             ...task,
@@ -1024,38 +996,6 @@ function createRewardsPanelSnapshot(parsed: boolean): RewardsPanelSnapshot {
         })),
         iframeSearchTerms: [...store.iframeSearchTerms]
     };
-}
-
-function applyRemoteRewardsProgress(progress: NonNullable<RewardsPanelSnapshot['currentProgress']>) {
-    const current = progress.current;
-    const total = progress.total;
-    if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return;
-
-    store.currentProgress.total = total;
-    const hasAttemptedSearch = store.searchState.totalSearchAttempts > 0;
-    if (
-        hasAttemptedSearch &&
-        !progress.completed &&
-        current <= store.currentProgress.lastChecked &&
-        store.isSearching
-    ) {
-        store.currentProgress.noProgressCount++;
-        if (store.currentProgress.noProgressCount >= config.maxNoProgressCount) {
-            store.searchState.needRest = true;
-        }
-    } else if (current > store.currentProgress.lastChecked) {
-        store.currentProgress.noProgressCount = 0;
-        store.searchState.restCycles = 0;
-    }
-
-    store.currentProgress.current = current;
-    store.currentProgress.lastChecked = current;
-    store.currentProgress.completed = Boolean(progress.completed || current >= total);
-    if (store.currentProgress.completed) {
-        store.currentProgress.noProgressCount = 0;
-        store.searchState.needRest = false;
-    }
-    updateProgressUI();
 }
 
 function applyRewardsPanelSnapshot(snapshot: RewardsPanelSnapshot): boolean {
@@ -1080,7 +1020,11 @@ function applyRewardsPanelSnapshot(snapshot: RewardsPanelSnapshot): boolean {
         ...(Array.isArray(snapshot.iframeSearchTerms) ? snapshot.iframeSearchTerms : [])
     ]);
 
-    if (snapshot.currentProgress) applyRemoteRewardsProgress(snapshot.currentProgress);
+    if (snapshot.accountTotalPoints !== null && snapshot.accountTotalPoints !== undefined) {
+        applyAccountTotalPoints(snapshot.accountTotalPoints);
+    } else {
+        recordMissingAccountTotalPoints();
+    }
     store.searchState.panelParsed = Boolean(snapshot.panelParsed);
     if (store.searchState.panelParsed) store.searchState.panelFailureCount = 0;
     if (store.isSearching) store.saveState();
@@ -1148,7 +1092,11 @@ async function clickTaskCardInDocument(task: DailyTask, targetDoc: Document): Pr
             const card = link.closest('.promo_cont, .rw-card, .explore-card, .task-card, [data-task-id], [data-offer-id]') || link;
             return cleanupTaskText(getCardDisplayName(card, 0)).toLowerCase() === normalizedTaskTitle;
         }) || matchingLinks[0];
-        const pressableElem = Array.from(targetDoc.querySelectorAll('#exploreonbing [role="link"]')).find(card =>
+        const pressableElem = Array.from(targetDoc.querySelectorAll([
+            '#dailyset [role="link"]',
+            '#exploreonbing [role="link"]',
+            '#moreactivities [role="link"]'
+        ].join(', '))).find(card =>
             cleanupTaskText(getCardDisplayName(card, 0)).toLowerCase() === normalizedTaskTitle
         ) as HTMLElement | undefined;
         const actionElem = (linkElem || pressableElem) as HTMLElement | undefined;

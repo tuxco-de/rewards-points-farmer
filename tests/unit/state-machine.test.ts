@@ -4,11 +4,33 @@ import { getDailyTaskKey, markDailyTaskSkipped, store, upsertDailyTask, type Dai
 describe('task execution state machine', () => {
     beforeEach(() => {
         store.resetRuntimeState();
+        localStorage.clear();
     });
 
     afterEach(() => {
         jest.useRealTimers();
         store.resetRuntimeState();
+        localStorage.clear();
+    });
+
+    test('preserves a legacy completed flag so card tasks can run', () => {
+        localStorage.setItem('bing_rewards_auto_searcher_state', JSON.stringify({
+            isSearching: false,
+            currentProgress: {
+                current: 90,
+                total: 90,
+                lastChecked: 90,
+                completed: true,
+                noProgressCount: 0,
+            },
+            lastActivityTime: Date.now(),
+            timestamp: Date.now(),
+        }));
+
+        const loaded = store.loadState();
+        expect(loaded).not.toBeNull();
+        expect(store.currentProgress.completed).toBe(true);
+        expect(store.currentProgress.mode).toBe('account-total');
     });
 
     test('allows Bing enough time to settle search credit before checking progress', () => {
@@ -24,8 +46,8 @@ describe('task execution state machine', () => {
     });
 
     test('keeps points search ahead of queued card tasks while daily progress is incomplete', () => {
+        store.currentProgress.initialized = true;
         store.currentProgress.current = 35;
-        store.currentProgress.total = 200;
         store.currentProgress.completed = false;
         store.searchState.panelParsed = true;
         store.searchState.dailyTasksQueue = [{

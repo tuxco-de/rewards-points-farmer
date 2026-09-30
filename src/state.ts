@@ -38,6 +38,66 @@ export interface DailyTaskDisplayItem {
     title?: string;
 }
 
+export interface AccountPointsProgress {
+    mode: 'account-total';
+    initialized: boolean;
+    current: number;
+    baseline: number;
+    earned: number;
+    lastChecked: number;
+    lastAttemptChecked: number;
+    completed: boolean;
+    noProgressCount: number;
+}
+
+export function createAccountPointsProgress(): AccountPointsProgress {
+    return {
+        mode: 'account-total',
+        initialized: false,
+        current: 0,
+        baseline: 0,
+        earned: 0,
+        lastChecked: 0,
+        lastAttemptChecked: 0,
+        completed: false,
+        noProgressCount: 0
+    };
+}
+
+function normalizeAccountPointsProgress(value: unknown): AccountPointsProgress {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return createAccountPointsProgress();
+    }
+    const candidate = value as Partial<AccountPointsProgress> & {
+        completed?: unknown;
+        noProgressCount?: unknown;
+    };
+    if (candidate.mode !== 'account-total') {
+        // Progress persisted before account-total tracking used an unrelated
+        // daily activity fraction and must not be migrated as a point balance.
+        // A legacy "search points are done" flag still means cards may run.
+        const legacy = createAccountPointsProgress();
+        legacy.completed = Boolean(candidate.completed);
+        legacy.noProgressCount = Math.max(0, Number(candidate.noProgressCount || 0));
+        return legacy;
+    }
+
+    const current = Math.max(0, Number(candidate.current || 0));
+    const baseline = Math.max(0, Number(candidate.baseline || 0));
+    const lastChecked = Math.max(0, Number(candidate.lastChecked || current));
+    return {
+        mode: 'account-total',
+        initialized: Boolean(candidate.initialized && current > 0),
+        current,
+        baseline: baseline || current,
+        earned: Math.max(0, Number(candidate.earned || 0)),
+        lastChecked,
+        lastAttemptChecked: Math.max(0, Number(candidate.lastAttemptChecked || 0)),
+        completed: Boolean(candidate.completed),
+        noProgressCount: Math.max(0, Number(candidate.noProgressCount || 0))
+    };
+}
+
 export function normalizeCandidateText(candidate: string): string {
     return candidate
         .replace(/[\u200B-\u200D\uFEFF]/g, '')
@@ -280,13 +340,7 @@ class StateStore {
     dailyTasksData: DailyTaskDisplayItem[] = [];
     countdownTimer: ReturnType<typeof setInterval> | null = null;
     
-    currentProgress = {
-        current: 0,
-        total: 0,
-        lastChecked: 0,
-        completed: false,
-        noProgressCount: 0
-    };
+    currentProgress: AccountPointsProgress = createAccountPointsProgress();
 
     searchState = {
         currentAction: 'idle',
@@ -340,6 +394,8 @@ class StateStore {
                 }
 
                 console.log('从本地存储加载状态:', state);
+                state.currentProgress = normalizeAccountPointsProgress(state.currentProgress);
+                this.currentProgress = state.currentProgress;
                 if (state.dailyTasksQueue) {
                     this.searchState.dailyTasksQueue = normalizeDailyTaskQueue(state.dailyTasksQueue);
                 }
@@ -386,13 +442,7 @@ class StateStore {
         this.searchState.dailyTasksQueue = [];
         this.searchState.attemptedTasks = [];
         if (!preserveProgress) {
-            this.currentProgress = {
-                current: 0,
-                total: 0,
-                lastChecked: 0,
-                completed: false,
-                noProgressCount: 0
-            };
+            this.currentProgress = createAccountPointsProgress();
         } else {
             this.currentProgress.noProgressCount = 0;
         }

@@ -535,24 +535,33 @@ export function updateProgressUI() {
     const progressFill = document.getElementById('rh-progress-fill');
     
     const curr = store.currentProgress.current || 0;
-    const total = store.currentProgress.total || 0;
+    const earned = store.currentProgress.earned || 0;
+    const initialized = store.currentProgress.initialized;
     const isCompleted = store.currentProgress.completed;
     const resolvedCardCount = store.dailyTasksData.filter(task => task.status !== '未完成').length;
     const displayedCardTotal = store.dailyTasksData.length || store.searchState.dailyTasksQueue.length;
     const hasPendingCards = store.searchState.dailyTasksQueue.length > 0 ||
         store.dailyTasksData.some(task => task.status === '未完成');
     
-    const text = isCompleted ? t('ui', 'completed') : `${curr}/${total}`;
-    
+    const text = initialized
+        ? t('ui', 'accountPoints', curr, earned, isCompleted)
+        : (isCompleted ? t('ui', 'completed') : t('ui', 'accountPointsPending'));
+
     if (badgeText) {
-        badgeText.textContent = isCompleted && hasPendingCards
-            ? t('ui', 'cardProgress', resolvedCardCount, displayedCardTotal)
-            : text;
+        if (isCompleted && hasPendingCards) {
+            badgeText.textContent = t('ui', 'cardProgress', resolvedCardCount, displayedCardTotal);
+        } else if (isCompleted) {
+            badgeText.textContent = t('ui', 'completed');
+        } else {
+            badgeText.textContent = text;
+        }
     }
     if (progressText) progressText.textContent = text;
-    
-    if (progressFill && total > 0) {
-        const percent = Math.min(100, Math.max(0, (curr / total) * 100));
+
+    if (progressFill && (initialized || isCompleted)) {
+        const percent = isCompleted
+            ? 100
+            : Math.min(100, Math.max(0, (store.currentProgress.noProgressCount / config.maxNoProgressCount) * 100));
         progressFill.style.width = `${percent}%`;
     } else if (progressFill) {
         progressFill.style.width = '0%';
@@ -632,7 +641,7 @@ export function updateDailyTasksUI(tasks: DailyTaskDisplayItem[]) {
 }
 
 export function showCompletionNotification() {
-    showToast(t('status', 'allCompletedToast', store.currentProgress.total), 6000);
+    showToast(t('status', 'allCompletedToast', store.currentProgress.earned), 6000);
 }
 
 export function setSearchButtonState(state: 'searching' | 'idle') {

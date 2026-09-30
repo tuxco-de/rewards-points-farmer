@@ -17,6 +17,11 @@
         <button type="button" aria-label="Close">Close</button>
       </header>
 
+      <div class="account-total">
+        <span class="text-sectionHeader">50,000</span>
+        <span class="text-labelControl">分</span>
+      </div>
+
       <section aria-label="日常任务">
         <h2>日常任务</h2>
         <div>80/180</div>
@@ -70,14 +75,32 @@
 
       <section id="moreactivities">
         <h2>日常任务</h2>
-        <a href="https://www.instagram.com/microsoftrewards">Instagram</a>
-        <a href="https://www.tiktok.com/@microsoftrewards">TikTok</a>
-        <a href="https://www.youtube.com/@microsoftrewards">YouTube</a>
+        <a data-task-card data-react-aria-pressable="true" aria-label="关注 Instagram 已完成" href="https://www.instagram.com/microsoftrewards">
+          <img alt="关注 Instagram" />
+          <p>关注 Microsoft Rewards</p>
+          <span>+10</span>
+          <span>已完成</span>
+        </a>
+        <a data-task-card data-react-aria-pressable="true" aria-label="关注 TikTok 已完成" href="https://www.tiktok.com/@microsoftrewards">
+          <img alt="关注 TikTok" />
+          <p>关注 Microsoft Rewards</p>
+          <span>+10</span>
+          <span>已完成</span>
+        </a>
+        <a data-task-card data-react-aria-pressable="true" aria-label="订阅 YouTube 已完成" href="https://www.youtube.com/@microsoftrewards">
+          <img alt="订阅 YouTube" />
+          <p>订阅 Microsoft Rewards</p>
+          <span>+10</span>
+          <span>已完成</span>
+        </a>
       </section>
     </main>
 
     <script>
-      if (new URLSearchParams(window.location.search).get('pointsComplete') === '1') {
+      const fixtureParams = new URLSearchParams(window.location.search);
+      const accountPoints = Number(fixtureParams.get('accountPoints') || '50000');
+      document.querySelector('.text-sectionHeader').textContent = accountPoints.toLocaleString('en-US');
+      if (fixtureParams.get('pointsComplete') === '1') {
         const progress = document.querySelector('[aria-label="日常任务 的进度"]');
         progress.setAttribute('aria-valuenow', '100');
         progress.previousElementSibling.textContent = '180/180';
