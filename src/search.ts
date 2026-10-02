@@ -150,7 +150,8 @@ export function getExecutionPhase(): ExecutionPhase {
     if (!store.currentProgress.completed) return 'points';
 
     const hasQueuedCards = store.searchState.dailyTasksQueue.length > 0;
-    if (hasQueuedCards || !store.searchState.panelParsed) return 'cards';
+    const hasUnresolvedCards = store.dailyTasksData.some(task => task.status !== '已完成');
+    if (hasQueuedCards || hasUnresolvedCards || !store.searchState.panelParsed) return 'cards';
     return 'complete';
 }
 
@@ -388,16 +389,16 @@ export async function searchLoop() {
         updateStatus(t('status', 'checkingProgress'));
         store.searchState.currentAction = 'checking';
 
-        const panelOpened = await withTimeout(openRewardsSidebarAsync(), 15_000, '打开 Rewards 侧栏');
+        const panelOpened = await withTimeout(openRewardsSidebarAsync(), 12_000, '打开 Rewards 侧栏');
         if (panelOpened) {
-            await withTimeout(waitForIframeContent(10000), 12_000, '等待 Rewards 浮层内容');
-            const panelParsed = await withTimeout(getDataFromPanelAsync(), 8_000, '解析 Rewards 面板');
+            await withTimeout(waitForIframeContent(4000), 6_000, '等待 Rewards 浮层内容');
+            const panelParsed = await withTimeout(getDataFromPanelAsync(), 5_000, '解析 Rewards 面板');
             getSearchTermsFromMainDoc();
 
             if (!panelParsed || !store.searchState.panelParsed) {
                 store.searchState.panelFailureCount++;
                 store.saveState();
-                await withTimeout(closeRewardsSidebarAsync(), 8_000, '关闭 Rewards 侧栏');
+                await withTimeout(closeRewardsSidebarAsync(), 4_000, '关闭 Rewards 侧栏');
                 if (store.searchState.panelFailureCount >= MAX_PANEL_FAILURES) {
                     stopAutomatedSearch(t('status', 'panelFailuresStopped', MAX_PANEL_FAILURES), true);
                     return;
@@ -421,7 +422,7 @@ export async function searchLoop() {
                 }
             }
 
-            await withTimeout(closeRewardsSidebarAsync(), 8_000, '关闭 Rewards 侧栏');
+            await withTimeout(closeRewardsSidebarAsync(), 4_000, '关闭 Rewards 侧栏');
 
             if (queuedTaskAction === 'clicked') {
                 updateStatus(t('status', 'executingPanel'));
@@ -453,6 +454,17 @@ export async function searchLoop() {
             if (executionPhase === 'complete') {
                 showCompletionNotification();
                 stopAutomatedSearch(t('status', 'allCompleted'), true);
+                return;
+            }
+
+            if (executionPhase === 'cards' && store.searchState.dailyTasksQueue.length === 0) {
+                const unresolvedCount = store.dailyTasksData.filter(task => task.status === '未完成').length;
+                if (unresolvedCount === 0) {
+                    showCompletionNotification();
+                    stopAutomatedSearch(t('status', 'allCompleted'), true);
+                } else {
+                    stopAutomatedSearch(t('status', 'unresolvedCardsStopped', unresolvedCount), true);
+                }
                 return;
             }
             

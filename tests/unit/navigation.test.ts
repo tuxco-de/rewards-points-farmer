@@ -34,10 +34,20 @@ describe('Bing navigation', () => {
         expect(result.searchParams.get('mkt')).toBe('en-US');
     });
 
+    test('preserves dedicated worker markers across search navigation', () => {
+        const result = new URL(buildBingSearchUrl(
+            '  spacex  ',
+            'https://www.bing.com/search?mkt=en-US&rewards_helper_worker=1&rewards_helper_autostart=1'
+        ));
+
+        expect(result.searchParams.get('rewards_helper_worker')).toBe('1');
+        expect(result.searchParams.get('rewards_helper_autostart')).toBe('1');
+    });
+
     test('builds a native-style fallback search URL without hard-coding UI state', () => {
         const result = new URL(buildBingSearchUrl(
             '  spacex  ',
-            'https://www.bing.com/search?mkt=en-US'
+            'https://www.bing.com/search?mkt=en-US&rewards_helper_worker=1'
         ));
 
         expect(result.pathname).toBe('/search');

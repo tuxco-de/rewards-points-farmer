@@ -83,7 +83,8 @@ export const messages = {
             safetyStopped: (count: number) => `已达到 ${count} 次搜索安全上限，任务已停止`,
             panelFailuresStopped: (count: number) => `连续 ${count} 次无法读取 Rewards 面板，任务已停止`,
             repeatedNoProgressStopped: (count: number) => `连续完成 ${count} 轮休息后仍无进度，任务已停止`,
-            runtimeErrorStopped: "任务发生运行错误，已安全停止"
+            runtimeErrorStopped: "任务发生运行错误，已安全停止",
+            unresolvedCardsStopped: (count: number) => `仍有 ${count} 张未完成卡片暂无法自动执行，任务已暂停，请手动完成或稍后重试`
         },
         parser: {
             completed: "已完成",

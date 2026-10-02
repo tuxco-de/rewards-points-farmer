@@ -1341,3 +1341,123 @@ test('keeps checking Rewards progress instead of stalling on waiting text', asyn
     statuses.some(s => /正在检查上次搜索进度|Checking previous progress|正在搜索|Searching:|执行面板|Waiting for the next|账户总积分|account total/i.test(s))
   ).toBe(true);
 });
+
+test('does not report completion when a panel card remains unfinished without a queue entry', async ({ page }) => {
+  await page.context().addInitScript(() => {
+    localStorage.setItem('bing_rewards_auto_searcher_state', JSON.stringify({
+      isSearching: true,
+      currentProgress: {
+        mode: 'account-total', initialized: true, current: 54_394, baseline: 54_344,
+        earned: 50, lastChecked: 54_394, lastAttemptChecked: 3, completed: true, noProgressCount: 0,
+      },
+      dailyTasksData: [
+        { name: '了解您的分数', status: '未完成' },
+        { name: '极速问答', status: '已完成' },
+      ],
+      dailyTasksQueue: [],
+      lastActivityTime: Date.now(),
+      timestamp: Date.now(),
+    }));
+  });
+
+  await loadUserscriptFixture(page, undefined, { worker: true, modernLayout: true, pointsComplete: true });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__e2e_getExecutionPhase?.()), { timeout: 8_000 })
+    .toBe('cards');
+  await page.evaluate(() => (window as any).startRewardsTask());
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__e2e_getExecutionPhase?.()), { timeout: 15_000 })
+    .toBe('cards');
+  await expect(page.locator('#rh-status-text')).not.toContainText('Rewards tasks completed');
+  expect(await page.evaluate(() => (window as any).__e2e_getExecutionPhase?.())).toBe('cards');
+});
+
+test('preserves queued cards across an empty cross-origin panel snapshot', async ({ page }) => {
+  const snapshot = {
+    parsed: true,
+    panelParsed: true,
+    accountTotalPoints: 54_239,
+    dailyTasksData: [],
+    dailyTasksQueue: [],
+    iframeSearchTerms: [],
+  };
+  await page.context().addInitScript(() => {
+    localStorage.setItem('bing_rewards_auto_searcher_state', JSON.stringify({
+      isSearching: true,
+      currentProgress: {
+        mode: 'account-total', initialized: true, current: 54_239, baseline: 54_239,
+        earned: 0, lastChecked: 54_239, lastAttemptChecked: 0, completed: true, noProgressCount: 0,
+      },
+      dailyTasksQueue: [{
+        url: '', title: '了解您的分数', status: '未完成', points: 10,
+        kind: 'search-promotion', searchTerms: ['分数'], attempts: 0, source: 'card',
+      }],
+      lastActivityTime: Date.now(), timestamp: Date.now(),
+    }));
+  });
+  await page.context().addInitScript({ path: userscriptPath });
+  const url = new URL(fixtureUrl);
+  url.searchParams.set('rewards_helper_worker', '1');
+  url.searchParams.set('modernLayout', '1');
+  url.hash = `rh_panel=${encodeURIComponent(JSON.stringify(snapshot))}`;
+  await page.goto(url.toString());
+  await page.waitForFunction(() => typeof (window as any).startRewardsTask === 'function');
+
+  const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue?.() || []);
+  expect(queue).toHaveLength(1);
+  expect(queue[0]).toMatchObject({ title: '了解您的分数', status: '未完成' });
+});
+
+test('applies a panel snapshot returned in the URL hash from the flyout page', async ({ page }) => {
+  const snapshot = {
+    parsed: true,
+    panelParsed: true,
+    accountTotalPoints: 52_439,
+    dailyTasksData: [{ name: '焕新您的日常', status: '未完成' }],
+    dailyTasksQueue: [{
+      url: '',
+      title: '焕新您的日常',
+      status: '未完成',
+      points: 10,
+      kind: 'search-promotion' as const,
+      searchTerms: ['美容产品'],
+      attempts: 0,
+      source: 'card',
+    }],
+    iframeSearchTerms: ['夏天旅行'],
+  };
+
+  await page.context().addInitScript(() => {
+    localStorage.setItem('bing_rewards_auto_searcher_state', JSON.stringify({
+      isSearching: true,
+      currentProgress: {
+        mode: 'account-total',
+        initialized: true,
+        current: 52_439,
+        baseline: 52_439,
+        earned: 0,
+        lastChecked: 52_439,
+        lastAttemptChecked: 0,
+        completed: false,
+        noProgressCount: 0,
+      },
+      lastActivityTime: Date.now(),
+      timestamp: Date.now(),
+    }));
+  });
+
+  await page.context().addInitScript({ path: userscriptPath });
+  const url = new URL(fixtureUrl);
+  url.searchParams.set('rewards_helper_worker', '1');
+  url.searchParams.set('modernLayout', '1');
+  url.hash = `rh_panel=${encodeURIComponent(JSON.stringify(snapshot))}`;
+  await page.goto(url.toString());
+  await page.waitForFunction(() => typeof (window as any).startRewardsTask === 'function');
+
+  // Read before the 1s worker collect overwrites with the fixture panel.
+  const snapshotState = await page.evaluate(() => (window as any).__e2e_getParsedSnapshot?.());
+  expect(snapshotState?.panelParsed).toBe(true);
+  expect(snapshotState?.currentProgress?.current).toBe(52_439);
+  expect(snapshotState?.dailyTasksQueue?.map((task: { title: string }) => task.title)).toContain('焕新您的日常');
+  expect(await page.evaluate(() => location.hash)).toBe('');
+});

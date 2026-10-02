@@ -5,7 +5,7 @@ import { t } from './i18n';
 import { getAccessibleRewardsFlyoutDocument, getRewardsFlyoutIframe } from './dom';
 import { registerRewardsPanelFrameBridge, requestRewardsPanelFrame } from './rewards-bridge';
 import searchPromotionTerms from '../config/search-promotion-terms.json';
-import { isBingHost, normalizeBingTaskUrl } from './navigation';
+import { isBingHost, normalizeBingTaskUrl, buildRewardsFlyoutUrl, buildRewardsReturnUrl, isRewardsHost } from './navigation';
 
 interface EarnedProgress {
     current: number;
@@ -1046,16 +1046,31 @@ function createRewardsPanelSnapshot(parsed: boolean): RewardsPanelSnapshot {
     };
 }
 
-function applyRewardsPanelSnapshot(snapshot: RewardsPanelSnapshot): boolean {
+export function applyRewardsPanelSnapshot(snapshot: RewardsPanelSnapshot): boolean {
     if (!snapshot || typeof snapshot !== 'object') return false;
 
     const incomingTasks = Array.isArray(snapshot.dailyTasksQueue)
         ? snapshot.dailyTasksQueue.filter(task => task && typeof task.url === 'string' && typeof task.title === 'string')
         : [];
     const incomingKeys = new Set(incomingTasks.map(getDailyTaskKey));
-    store.searchState.dailyTasksQueue = store.searchState.dailyTasksQueue.filter(task =>
-        task.source !== 'card' || incomingKeys.has(getDailyTaskKey(task))
+    const incomingStatuses = new Map(
+        (Array.isArray(snapshot.dailyTasksData) ? snapshot.dailyTasksData : [])
+            .map(item => [normalizeCandidateText(item.name || item.title || '').toLowerCase(), item.status] as const)
+            .filter(([name]) => name.length > 0)
     );
+
+    store.searchState.dailyTasksQueue = store.searchState.dailyTasksQueue.filter(task => {
+        if (task.source !== 'card') return true;
+        if (incomingKeys.has(getDailyTaskKey(task))) return true;
+
+        const normalizedTitle = normalizeCandidateText(task.title).toLowerCase();
+        const observedStatus = incomingStatuses.get(normalizedTitle);
+        if (observedStatus === '已完成' || observedStatus === '已跳过') return false;
+
+        // Cross-origin frames can briefly return an empty snapshot while reloading.
+        // An absent task is not evidence that an existing card disappeared.
+        return true;
+    });
     incomingTasks.forEach(task => upsertDailyTask(task));
 
     store.dailyTasksData = Array.isArray(snapshot.dailyTasksData)
@@ -1086,14 +1101,64 @@ export async function getDataFromPanelAsync(): Promise<boolean> {
         return getDataFromPanel();
     }
 
-    const snapshot = await requestRewardsPanelFrame<RewardsPanelSnapshot>(iframe, 'parse', undefined, 4000);
+    const snapshot = await requestRewardsPanelFrame<RewardsPanelSnapshot>(iframe, 'parse', undefined, 2500);
     if (!snapshot) {
         console.log('[RewardsHelper] 跨域 Rewards 面板没有返回可解析数据');
         store.searchState.panelParsed = false;
+        navigateToRewardsFlyoutForParse();
         return false;
     }
     console.log('[RewardsHelper] 已从跨域 Rewards 面板接收解析结果');
     return applyRewardsPanelSnapshot(snapshot);
+}
+
+const PANEL_SNAPSHOT_HASH_PREFIX = '#rh_panel=';
+
+export function navigateToRewardsFlyoutForParse(): void {
+    const returnHref = window.location.href;
+    console.log('[RewardsHelper] 跨域桥接不可用，跳转 Rewards 浮层页解析面板');
+    store.saveState();
+    window.location.assign(buildRewardsFlyoutUrl(returnHref));
+}
+
+export function consumeRewardsPanelSnapshotFromHash(): RewardsPanelSnapshot | null {
+    if (!window.location.hash.startsWith(PANEL_SNAPSHOT_HASH_PREFIX)) return null;
+    try {
+        const raw = window.location.hash.slice(PANEL_SNAPSHOT_HASH_PREFIX.length);
+        const snapshot = JSON.parse(decodeURIComponent(raw)) as RewardsPanelSnapshot;
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        return snapshot;
+    } catch (e) {
+        console.warn('[RewardsHelper] 解析面板快照 hash 失败:', e);
+        return null;
+    }
+}
+
+export function applyIncomingRewardsPanelSnapshot(): boolean {
+    const snapshot = consumeRewardsPanelSnapshotFromHash();
+    if (!snapshot) return false;
+    store.loadState();
+    const applied = applyRewardsPanelSnapshot(snapshot);
+    store.saveState();
+    console.log('[RewardsHelper] 已接收浮层页返回的面板解析结果');
+    return applied;
+}
+
+export async function runRewardsFlyoutPageParse(): Promise<void> {
+    store.loadConfig();
+    store.loadState();
+    const parsed = getDataFromPanel();
+    store.searchState.panelParsed = parsed || store.searchState.panelParsed;
+    store.saveState();
+
+    const snapshot = createRewardsPanelSnapshot(parsed);
+    const returnHref = new URLSearchParams(window.location.search).get('rh_return')
+        || new URLSearchParams(window.location.search).get('ru')
+        || 'https://www.bing.com/?rewards_helper_worker=1';
+    const back = buildRewardsReturnUrl(returnHref);
+    const payload = PANEL_SNAPSHOT_HASH_PREFIX + encodeURIComponent(JSON.stringify(snapshot));
+    console.log(`[RewardsHelper] 浮层页解析完成，返回 ${back.slice(0, 80)}`);
+    window.location.replace(back + payload);
 }
 
 export function registerRewardsPanelBridge() {

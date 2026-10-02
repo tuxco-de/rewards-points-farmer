@@ -1,6 +1,62 @@
-import { clickTaskCardAsync, getCardCompletionStatus, isRewardsTaskCard, parseEarnedProgressText } from '../../src/parser';
+import { applyRewardsPanelSnapshot, clickTaskCardAsync, getCardCompletionStatus, isRewardsTaskCard, parseEarnedProgressText } from '../../src/parser';
+import { store, type DailyTask } from '../../src/state';
 
 describe('Rewards parser', () => {
+    beforeEach(() => {
+        store.resetRuntimeState();
+    });
+
+    test('preserves queued cards when a cross-origin snapshot is temporarily empty', () => {
+        const task: DailyTask = {
+            url: '',
+            title: '了解您的分数',
+            status: '未完成',
+            points: 10,
+            kind: 'search-promotion',
+            searchTerms: ['分数'],
+            attempts: 0,
+            source: 'card',
+        };
+        store.searchState.dailyTasksQueue = [task];
+
+        applyRewardsPanelSnapshot({
+            parsed: true,
+            panelParsed: true,
+            accountTotalPoints: 54_239,
+            dailyTasksData: [],
+            dailyTasksQueue: [],
+            iframeSearchTerms: [],
+        });
+
+        expect(store.searchState.dailyTasksQueue).toHaveLength(1);
+        expect(store.searchState.dailyTasksQueue[0].title).toBe('了解您的分数');
+    });
+
+    test('removes a queued card when a full snapshot observes it completed', () => {
+        const task: DailyTask = {
+            url: '',
+            title: '了解您的分数',
+            status: '未完成',
+            points: 10,
+            kind: 'search-promotion',
+            searchTerms: ['分数'],
+            attempts: 0,
+            source: 'card',
+        };
+        store.searchState.dailyTasksQueue = [task];
+
+        applyRewardsPanelSnapshot({
+            parsed: true,
+            panelParsed: true,
+            accountTotalPoints: 54_239,
+            dailyTasksData: [{ name: '了解您的分数', status: '已完成' }],
+            dailyTasksQueue: [],
+            iframeSearchTerms: [],
+        });
+
+        expect(store.searchState.dailyTasksQueue).toHaveLength(0);
+    });
+
     test('prefers an explicit completed card label over a generic point label', () => {
         const card = document.createElement('a');
         card.setAttribute('aria-label', 'Daily poll is completed');

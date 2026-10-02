@@ -22,6 +22,10 @@ export function getBingSearchBaseUrl(baseHref = window.location.href): URL {
         const value = current.searchParams.get(name);
         if (value) target.searchParams.set(name, value);
     }
+    for (const name of ['rewards_helper_worker', 'rewards_helper_autostart'] as const) {
+        const value = current.searchParams.get(name);
+        if (value) target.searchParams.set(name, value);
+    }
     return target;
 }
 
@@ -82,4 +86,23 @@ export function normalizeBingTaskUrl(value: string, baseHref = window.location.h
         if (value) target.searchParams.set(name, value);
     }
     return target.toString();
+}
+
+export function isRewardsHost(hostname = window.location.hostname): boolean {
+    const host = hostname.toLowerCase();
+    return host === 'rewards.bing.com' || host.endsWith('.rewards.bing.com');
+}
+
+export function buildRewardsFlyoutUrl(returnHref = window.location.href): string {
+    return `https://rewards.bing.com/flyout?channel=bingflyout&partnerId=BingRewards&isDarkMode=0&ru=${encodeURIComponent(returnHref)}&rh_return=${encodeURIComponent(returnHref)}`;
+}
+
+export function buildRewardsReturnUrl(returnHref: string): string {
+    try {
+        const url = new URL(returnHref, 'https://www.bing.com/');
+        url.hash = '';
+        return url.toString();
+    } catch {
+        return 'https://www.bing.com/?rewards_helper_worker=1';
+    }
 }

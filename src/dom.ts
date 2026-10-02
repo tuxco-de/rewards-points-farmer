@@ -215,11 +215,11 @@ export async function openRewardsSidebarAsync() {
     const openedFrame = getRewardsFlyoutIframe();
     if (openedFrame && isElementVisible(openedFrame)) return true;
 
-    const pointsContainer = await waitForVisibleElement(REWARDS_ENTRY_SELECTOR, 5000);
+    const pointsContainer = await waitForVisibleElement(REWARDS_ENTRY_SELECTOR, 3000);
     if (pointsContainer) {
         clickRewardsEntry(pointsContainer);
         console.log('已点击积分按钮，正在打开侧边栏...');
-        const opened = await waitForElement(REWARDS_FLYOUT_SELECTOR, 5000);
+        const opened = await waitForElement(REWARDS_FLYOUT_SELECTOR, 2500);
         if (opened) return true;
 
         // The redesigned medallion can collapse (#rh_rwm width 0) so the native
@@ -254,7 +254,7 @@ async function injectFallbackRewardsFlyout(): Promise<boolean> {
         if (entry) entry.setAttribute('aria-expanded', 'true');
 
         console.log('[RewardsHelper] 原生浮层未打开，已注入 Rewards flyout iframe');
-        return Boolean(await waitForElement(REWARDS_FLYOUT_SELECTOR, 5000));
+        return Boolean(await waitForElement(REWARDS_FLYOUT_SELECTOR, 2500));
     } catch (e) {
         console.warn('[RewardsHelper] 注入 Rewards flyout 失败:', e);
         return false;
@@ -279,6 +279,7 @@ export async function waitForIframeContent(timeout = 10000): Promise<HTMLIFrameE
     const POLL_INTERVAL = 500;
     const MIN_CONTENT_LENGTH = 30; // iframe body must have at least this many chars
     const startTime = Date.now();
+    let bridgeMisses = 0;
 
     while (Date.now() - startTime < timeout) {
         const iframe = getRewardsFlyoutIframe();
@@ -295,6 +296,13 @@ export async function waitForIframeContent(timeout = 10000): Promise<HTMLIFrameE
                 const ready = await requestRewardsPanelFrame<boolean>(iframe, 'ready', undefined, 750);
                 if (ready) {
                     console.log(`[RewardsHelper] 跨域 Rewards iframe 内容就绪 (耗时 ${Date.now() - startTime}ms)`);
+                    return iframe;
+                }
+                // Bridge not installed (common for dynamically injected iframes
+                // under some userscript managers). Do not burn the full wait.
+                bridgeMisses++;
+                if (bridgeMisses >= 2) {
+                    console.log('[RewardsHelper] 跨域 Rewards 桥接未响应，跳过内容等待');
                     return iframe;
                 }
             }

@@ -1,7 +1,7 @@
 import { store, STORAGE_KEY } from './state';
 import { createUI, updateStatus, setSearchButtonState, updateProgressUI, updateDailyTasksUI, showToast, openSettingsPanel } from './ui';
 import { openRewardsSidebarAsync, closeRewardsSidebarAsync, waitForIframeContent } from './dom';
-import { getDataFromPanelAsync, getSearchTermsFromMainDoc, registerRewardsPanelBridge, applyMedallionAccountTotalPoints } from './parser';
+import { getDataFromPanelAsync, getSearchTermsFromMainDoc, registerRewardsPanelBridge, applyMedallionAccountTotalPoints, applyIncomingRewardsPanelSnapshot, runRewardsFlyoutPageParse } from './parser';
 import { searchLoop, stopAutomatedSearch, performSearch, startAutomatedSearch, getSearchTerm, getExecutionPhase, type SearchExecutionResult } from './search';
 import { simulateTypingAndSearch } from './dom';
 import { t } from './i18n';
@@ -188,9 +188,15 @@ if (window !== window.top) {
     // userscript instance parses and operates the cross-origin iframe, while
     // the top-level Bing instance remains the sole owner of UI and state.
     registerRewardsPanelBridge();
+} else if (/(^|\.)rewards\.bing\.com$/i.test(window.location.hostname)) {
+    // Top-level flyout page: parse the panel here (iframe bridge may be
+    // unavailable under some userscript managers) and bounce back with data.
+    if (document.readyState === 'complete') void runRewardsFlyoutPageParse();
+    else window.addEventListener('load', () => { void runRewardsFlyoutPageParse(); }, { once: true });
 } else {
     const initializeTopLevel = () => {
         console.log('Rewards Points Farmer 已加载');
+        applyIncomingRewardsPanelSnapshot();
         dedicatedWorker = initializeDedicatedWorkerContext();
         store.loadConfig();
         createUI({

@@ -45,6 +45,15 @@ describe('task execution state machine', () => {
         expect(getExecutionPhase()).toBe('complete');
     });
 
+    test('does not declare completion while observed cards are still unfinished but unqueued', () => {
+        store.currentProgress.completed = true;
+        store.searchState.panelParsed = true;
+        store.dailyTasksData = [{ name: '了解您的分数', status: '未完成' }];
+        store.searchState.dailyTasksQueue = [];
+
+        expect(getExecutionPhase()).toBe('cards');
+    });
+
     test('keeps points search ahead of queued card tasks while daily progress is incomplete', () => {
         store.currentProgress.initialized = true;
         store.currentProgress.current = 35;
@@ -85,10 +94,10 @@ describe('task execution state machine', () => {
         expect(store.countdownTimer).toBeNull();
     });
 
-    test('does not remain in card phase for an already skipped UI card', () => {
+    test('does not remain in card phase when all observed cards are completed', () => {
         store.currentProgress.completed = true;
         store.searchState.panelParsed = true;
-        store.dailyTasksData = [{ name: 'Skipped card', status: '未完成' }];
+        store.dailyTasksData = [{ name: 'Completed card', status: '已完成' }];
         store.searchState.dailyTasksQueue = [];
 
         expect(getExecutionPhase()).toBe('complete');
