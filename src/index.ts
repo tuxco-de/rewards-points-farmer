@@ -184,9 +184,8 @@ window.addEventListener('beforeunload', () => {
 });
 
 if (window !== window.top) {
-    // The redesigned Rewards flyout is hosted on rewards.bing.com. Its own
-    // userscript instance parses and operates the cross-origin iframe, while
-    // the top-level Bing instance remains the sole owner of UI and state.
+    // Both rewards.bing.com/flyout and Bing's native /rewards/panelflyout
+    // register a frame bridge. The top-level instance owns UI and state.
     registerRewardsPanelBridge();
 } else if (/(^|\.)rewards\.bing\.com$/i.test(window.location.hostname)) {
     // Top-level flyout page: parse the panel here (iframe bridge may be

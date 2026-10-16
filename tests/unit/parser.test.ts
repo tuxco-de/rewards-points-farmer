@@ -1,9 +1,67 @@
-import { applyRewardsPanelSnapshot, clickTaskCardAsync, getCardCompletionStatus, isRewardsTaskCard, parseEarnedProgressText } from '../../src/parser';
+import { applyRewardsPanelSnapshot, clickTaskCardAsync, getCardCompletionStatus, isRewardsTaskCard, parseAccountTotalPoints, parseEarnedProgressText } from '../../src/parser';
 import { store, type DailyTask } from '../../src/state';
 
 describe('Rewards parser', () => {
     beforeEach(() => {
         store.resetRuntimeState();
+        document.body.innerHTML = '';
+    });
+
+    test('reads the native balance card instead of an activity reward or referral bonus', () => {
+        document.body.innerHTML = `
+            <div>用温馨秋日焕新桌面赚取 20 分</div>
+            <div>当朋友搜索时可赚取 15,000 积分</div>
+            <a class="balance_card_points_clickable" href="/dashboard">
+                <div class="ms-Stack css-111">
+                    <div class="ms-StackItem css-112"><span class="css-113">55,694</span></div>
+                    <div class="ms-StackItem css-112"><span class="css-114">我的积分</span></div>
+                </div>
+            </a>
+            <main><div>每日搜索 70/200</div></main>`;
+
+        expect(parseAccountTotalPoints(document)).toBe(55_694);
+    });
+
+    test.each(['我的积分', 'My points', 'Available points'])('reads a nested balance labeled %s without generated classes', label => {
+        document.body.innerHTML = `<main><a><div><div><span>55,694</span></div><div><span>${label}</span></div></div></a></main>`;
+        expect(parseAccountTotalPoints(document)).toBe(55_694);
+    });
+
+    test('does not interpret promotional points or daily progress as a balance', () => {
+        document.body.innerHTML = `
+            <main>
+                <div>每日搜索 70/200</div>
+                <div>每月最多可获得额外 15,000 点积分</div>
+                <div>赚取 20 分</div>
+                <a class="rw-card"><span>10</span><span>points</span></a>
+            </main>`;
+        expect(parseAccountTotalPoints(document)).toBeNull();
+    });
+
+    test('does not turn an empty balance into zero', () => {
+        document.body.innerHTML = '<main><span class="text-sectionHeader"></span><span class="text-labelControl">分</span></main>';
+        expect(parseAccountTotalPoints(document)).toBeNull();
+    });
+
+    test('accepts an explicit zero account balance', () => {
+        document.body.innerHTML = '<main><span class="text-sectionHeader">0</span><span class="text-labelControl">分</span></main>';
+        expect(parseAccountTotalPoints(document)).toBe(0);
+    });
+
+    test('excludes a locked task even if it still has a Bing URL and point label', () => {
+        document.body.innerHTML = `
+            <div id="exb-activityChecklist">
+                <div class="promo_cont">
+                    <div class="locked_overlay"></div>
+                    <a href="https://www.bing.com/?form=ML2PCR">
+                        <p class="promo-title">扩展您的词汇量</p>
+                        <div class="locked_point"><span class="point">10</span></div>
+                        <div class="locked_level_required_text" role="status">明天有空</div>
+                    </a>
+                </div>
+            </div>`;
+        expect(isRewardsTaskCard(document.querySelector('.promo_cont')!)).toBe(false);
+        expect(isRewardsTaskCard(document.querySelector('a')!)).toBe(false);
     });
 
     test('preserves queued cards when a cross-origin snapshot is temporarily empty', () => {
@@ -55,6 +113,20 @@ describe('Rewards parser', () => {
         });
 
         expect(store.searchState.dailyTasksQueue).toHaveLength(0);
+    });
+
+    test('removes a persisted card when the new snapshot explicitly observes it locked', () => {
+        store.searchState.dailyTasksQueue = [{
+            url: 'https://www.bing.com/?form=ML2PCR', title: '扩展您的词汇量',
+            status: '未完成', points: 10, kind: 'search-promotion',
+            searchTerms: ['word meanings'], attempts: 1, source: 'card',
+        }];
+        applyRewardsPanelSnapshot({
+            parsed: true, panelParsed: true, accountTotalPoints: 55_694,
+            dailyTasksData: [], dailyTasksQueue: [], iframeSearchTerms: [],
+            unavailableTaskTitles: ['扩展您的词汇量\u200B'],
+        });
+        expect(store.searchState.dailyTasksQueue).toEqual([]);
     });
 
     test('prefers an explicit completed card label over a generic point label', () => {
@@ -327,6 +399,42 @@ describe('Rewards parser', () => {
 
         expect(handled).toBe(true);
         expect(clicked).toBe(true);
+    });
+
+    test('does not click another task with the same URL when the requested card is missing', async () => {
+        document.body.innerHTML = '<iframe id="b_rwFlyout"></iframe>';
+        const iframeDoc = document.querySelector('iframe')!.contentDocument!;
+        iframeDoc.body.innerHTML = `
+            <div class="promo_cont"><a href="https://www.bing.com/?form=ML2PCR">
+                <span class="promo-title">有症状吗？</span><span class="point">10</span>
+            </a></div>`;
+        const onClick = jest.fn((event: Event) => event.preventDefault());
+        iframeDoc.addEventListener('click', onClick);
+
+        expect(await clickTaskCardAsync({
+            url: 'https://www.bing.com/?form=ML2PCR', title: '了解您的分数',
+            status: '未完成', points: 10, kind: 'search-promotion',
+            searchTerms: ['信用报告查询'], attempts: 0, source: 'card',
+        })).toBe(false);
+        expect(onClick).not.toHaveBeenCalled();
+    });
+
+    test('does not click a requested card after it becomes locked', async () => {
+        document.body.innerHTML = '<iframe id="b_rwFlyout"></iframe>';
+        const iframeDoc = document.querySelector('iframe')!.contentDocument!;
+        iframeDoc.body.innerHTML = `
+            <div class="promo_cont"><div class="locked_overlay"></div>
+                <a href="https://www.bing.com/?form=ML2PCR"><span class="promo-title">了解您的分数</span></a>
+            </div>`;
+        const onClick = jest.fn((event: Event) => event.preventDefault());
+        iframeDoc.addEventListener('click', onClick);
+
+        expect(await clickTaskCardAsync({
+            url: 'https://www.bing.com/?form=ML2PCR', title: '了解您的分数',
+            status: '未完成', points: 10, kind: 'search-promotion',
+            searchTerms: ['信用报告查询'], attempts: 0, source: 'card',
+        })).toBe(false);
+        expect(onClick).not.toHaveBeenCalled();
     });
 
     test('still rejects a href-less role link outside the redesigned explore section', () => {

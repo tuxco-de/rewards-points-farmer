@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 const fixtureUrl = pathToFileURL(path.resolve(__dirname, 'fixtures/bing-shell.html')).href;
 const fixturePath = path.resolve(__dirname, 'fixtures/bing-shell.html');
 const vNextFlyoutFixturePath = path.resolve(__dirname, 'fixtures/rewards-vnext-flyout.html');
+const nativeFlyoutFixturePath = path.resolve(__dirname, 'fixtures/rewards-native-flyout.html');
 const userscriptPath = path.resolve(__dirname, '../../dist/rewards-points-farmer.user.js');
 
 type SavedState = {
@@ -64,6 +65,7 @@ async function loadUserscriptFixture(
     menuApi?: boolean;
     modernLayout?: boolean;
     vNextLayout?: boolean;
+    nativePanelLayout?: boolean;
     rejectMouseEventView?: boolean;
     wrappedInputValue?: boolean;
     englishSummary?: boolean;
@@ -164,7 +166,7 @@ async function loadUserscriptFixture(
   }
 
   await page.context().addInitScript({ path: userscriptPath });
-  if (options.vNextLayout) {
+  if (options.vNextLayout || options.nativePanelLayout) {
     await page.route('https://www.bing.com/**', route => route.fulfill({
       contentType: 'text/html',
       body: fs.readFileSync(fixturePath, 'utf8'),
@@ -173,9 +175,13 @@ async function loadUserscriptFixture(
       contentType: 'text/html',
       body: fs.readFileSync(vNextFlyoutFixturePath, 'utf8'),
     }));
+    await page.route('https://cn.bing.com/rewards/panelflyout**', route => route.fulfill({
+      contentType: 'text/html; charset=utf-8',
+      body: fs.readFileSync(nativeFlyoutFixturePath, 'utf8'),
+    }));
   }
 
-  const url = new URL(options.vNextLayout
+  const url = new URL(options.vNextLayout || options.nativePanelLayout
     ? 'https://www.bing.com/__rewards-helper-fixture__'
     : fixtureUrl);
   if (options.worker) {
@@ -188,6 +194,7 @@ async function loadUserscriptFixture(
   if (options.accountPoints !== undefined) url.searchParams.set('accountPoints', String(options.accountPoints));
   if (options.modernLayout) url.searchParams.set('modernLayout', '1');
   if (options.vNextLayout) url.searchParams.set('vNextLayout', '1');
+  if (options.nativePanelLayout) url.searchParams.set('nativePanelLayout', '1');
   if (options.englishSummary) url.searchParams.set('englishSummary', '1');
   if (options.completedChineseSummary) url.searchParams.set('completedChineseSummary', '1');
   if (options.hundredTotal) url.searchParams.set('hundredTotal', '1');
@@ -526,6 +533,64 @@ test('parses and closes the cross-origin vNext Rewards side panel', async ({ pag
   await expect.poll(() => page.evaluate(() => document.body.dataset.flyoutCloseCount)).toBe('1');
   await expect(page.locator('#rewid-f')).toHaveCount(0);
   await expect(page.locator('#id_rh_w')).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('parses the native balance card and excludes tomorrow-only tasks through the Bing frame bridge', async ({ page }) => {
+  await loadUserscriptFixture(page, {
+    isSearching: false,
+    currentProgress: accountProgress({ current: 55_694, baseline: 55_694, lastChecked: 55_694 }),
+    dailyTasksQueue: [{
+      url: 'https://www.bing.com/?form=ML2PCR', title: '扩展您的词汇量',
+      status: '未完成', points: 10, kind: 'search-promotion',
+      searchTerms: ['word meanings'], attempts: 1,
+    }],
+  }, {
+    worker: true,
+    nativePanelLayout: true,
+    accountPoints: 55_694,
+  });
+
+  await expect(page.locator('#rh-progress-text')).toHaveText('55,694 pts', { timeout: 8_000 });
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(1/5)', { timeout: 8_000 });
+  const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
+  expect(queue.map((task: { title: string }) => task.title)).toEqual([
+    '了解您的分数', '有症状吗？', '学习新食谱', 'Explore videogames',
+  ]);
+  expect(new Set(queue.map((task: { url: string }) => task.url)).size).toBe(1);
+  expect(queue.every((task: { kind: string; points: number }) => task.kind === 'search-promotion' && task.points === 10)).toBe(true);
+  expect(queue[0].searchTerms).toEqual(['信用报告查询', '如何提高信用评分', '信用评分影响因素']);
+  expect(queue[3].searchTerms).toEqual(['popular video games', 'new video games', 'video game reviews']);
+  await expect(page.locator('#rh-tasks-list')).not.toContainText('明天有空');
+  await expect(page.locator('#rh-tasks-list')).not.toContainText('扩展您的词汇量');
+  await expect.poll(() => page.evaluate(() => document.body.dataset.flyoutCloseCount)).toBe('1');
+  await expect(page.locator('#rewid-f')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).__e2e_getParsedSnapshot().currentProgress.current)).toBe(55_694);
+});
+
+test('clicks the requested native search card when available cards share one URL', async ({ page }) => {
+  await loadUserscriptFixture(page, {
+    isSearching: false,
+    currentProgress: accountProgress({ completed: true, current: 55_694, baseline: 55_694, lastChecked: 55_694 }),
+    dailyTasksQueue: [],
+    attemptedTasks: [],
+  }, {
+    worker: true,
+    nativePanelLayout: true,
+    accountPoints: 55_694,
+  });
+  await expect(page.locator('#rh-tasks-count')).toHaveText('(1/5)', { timeout: 8_000 });
+  await page.evaluate(() => (window as any).startRewardsTask());
+  try {
+    await expect.poll(
+      () => page.evaluate(() => (document.body.dataset.lastCardTitle || '').replace(/\u200B/g, '')),
+      { timeout: 8_000 }
+    ).toBe('了解您的分数');
+    expect(await page.evaluate(() => Number(document.body.dataset.cardClickCount))).toBe(1);
+    const queue = await page.evaluate(() => (window as any).__e2e_getDailyTaskQueue());
+    expect(queue[0]).toMatchObject({ title: '了解您的分数', attempts: 1 });
+  } finally {
+    await page.evaluate(() => (window as any).stopRewardsTask());
+  }
 });
 
 test('clicks a vNext activity through the cross-origin Rewards bridge', async ({ page }) => {
@@ -1139,7 +1204,7 @@ test('settles pending search credit and keeps the points loop moving', async ({ 
     .poll(() => page.evaluate(() => document.querySelector('#rh-status-text')?.textContent || ''), { timeout: 20_000 })
     .not.toMatch(/等待获取进度信息|Waiting for progress info/);
   await expect
-    .poll(() => page.evaluate(() => document.body.dataset.blockedSearchNav || ''), { timeout: 25_000 })
+    .poll(() => page.evaluate(() => document.body.dataset.blockedSearchNav || '').catch(() => ''), { timeout: 25_000 })
     .toContain('q=');
 });
 

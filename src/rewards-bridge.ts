@@ -55,7 +55,10 @@ function getFrameOrigin(iframe: HTMLIFrameElement): string | null {
 
 export function isRewardsPanelFrameContext(): boolean {
     const hostname = window.location.hostname.toLowerCase();
-    return window !== window.top && (hostname === 'rewards.bing.com' || hostname.endsWith('.rewards.bing.com'));
+    const isRewardsHost = hostname === 'rewards.bing.com' || hostname.endsWith('.rewards.bing.com');
+    const isNativePanel = isTrustedBingOrigin(window.location.origin) &&
+        window.location.pathname.toLowerCase() === '/rewards/panelflyout';
+    return window !== window.top && (isRewardsHost || isNativePanel);
 }
 
 export async function requestRewardsPanelFrame<T>(

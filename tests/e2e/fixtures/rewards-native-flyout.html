@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Microsoft Rewards</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 16px; }
+      .promo_cont { margin-bottom: 12px; }
+      .block { display: block; border: 1px solid #ddd; padding: 12px; }
+      .locked_overlay { pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header id="panel_header_identifier">
+        <h1>微软积分商城</h1>
+        <button id="closeEduPanel" aria-label="关闭">关闭</button>
+      </header>
+      <a class="balance_card_points_clickable" href="https://rewards.bing.com/dashboard?ref=rewardspanel">
+        <div class="ms-Stack css-111">
+          <div class="ms-StackItem css-112"><span class="css-113" id="fixture-balance">55,694</span></div>
+          <div class="ms-StackItem css-112"><span class="css-114">我的积分</span></div>
+        </div>
+      </a>
+      <div>每月最多可获得额外 15,000 点积分</div>
+      <div>用温馨秋日焕新桌面赚取 20 分</div>
+      <div class="search_earn_card">每日搜索 70/200 每天搜索并赚取最多 200 点积分</div>
+      <div id="exb-activityChecklist">
+        <h2>在必应上浏览</h2>
+        <div id="exb-checklist-header"><span>0 / 80</span></div>
+        <div id="fixture-activities"></div>
+      </div>
+      <div class="promo_cont slim" aria-label="使用 Bing 预订航班 - Offer is Completed">
+        <a class="block" href="https://www.bing.com/search?q=cheap+flights">
+          <p class="promo-title">使用 Bing 预订航班</p>
+          <div class="point_cont"><div class="shortPoint point" aria-label="5 添加到帐户的积分">5</div></div>
+        </a>
+      </div>
+    </div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      document.querySelector('#fixture-balance').textContent = Number(params.get('accountPoints') || '55694').toLocaleString('en-US');
+      const sharedUrl = 'https://www.bing.com/?form=ML2PCR&OCID=ML2PCR&PUBL=RewardsDO&CREA=ML2PCR&PC=ML2PCR&rwAutoFlyout=exb';
+      const activities = [
+        ['了解您的分数\u200B', '在 Bing 上搜索以检查您的信用报告并提高您的分数', false],
+        ['有症状吗？', '在 Bing 上搜索健康状况，了解症状', false],
+        ['学习新食谱', '在 Bing 上搜索新食谱', false],
+        ['Explore videogames', 'Search on Bing to explore videogames', false],
+        ['扩展您的词汇量\u200B', '在 Bing 上搜索您不理解的单词的含义。', true],
+        ['What time is it?\u200B', 'Search on Bing to see what time it is in a different time zone.', true],
+        ['经济状况如何？', '在 Bing 上搜索特定股票的最新价格。', true],
+        ['睡得更好\u200B', '在 Bing 上搜索高评分的床垫', true],
+      ];
+      document.querySelector('#fixture-activities').innerHTML = activities.map(([title, description, locked]) => `
+        <div id="exclusive_promo_cont" class="promo_cont" data-is-inprogress-enabled="${locked ? 'false' : 'yes'}">
+          ${locked ? '<div class="locked_overlay"></div><img class="locked_img" alt="已锁定图像" />' : ''}
+          <a class="block" href="${locked ? 'javascript:void(0);' : sharedUrl}" target="_blank">
+            <p class="b_subtitle promo-title">${title}</p>
+            <div class="fc_auto pc b_subtitle ${locked ? 'locked_point' : 'inprogress'}">
+              <div class="point_cont"><div class="shortPoint point" aria-label="10 积分">10</div></div>
+            </div>
+            <div class="fp_row b_footnote promo-desc" title="${description}">${description}</div>
+            ${locked ? '<div class="locked_level_required_text" role="status" aria-label="明天有空">明天有空</div>' : ''}
+          </a>
+        </div>`).join('');
+      document.querySelector('#closeEduPanel').addEventListener('click', () => {
+        window.parent.postMessage({ fixtureAction: 'close' }, 'https://www.bing.com');
+      });
+      document.querySelectorAll('.promo_cont a').forEach(card => card.addEventListener('click', event => {
+        event.preventDefault();
+        window.parent.postMessage({
+          fixtureAction: 'card-click',
+          href: card.getAttribute('href'),
+          title: card.querySelector('.promo-title').textContent,
+        }, 'https://www.bing.com');
+      }));
+    </script>
+  </body>
+</html>

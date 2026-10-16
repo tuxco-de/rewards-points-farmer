@@ -3,7 +3,7 @@ import { DailyTask, DailyTaskDisplayItem, getDailyTaskKey, isUrlLikeSearchCandid
 import { updateDailyTasksUI, updateProgressUI } from './ui';
 import { t } from './i18n';
 import { getAccessibleRewardsFlyoutDocument, getRewardsFlyoutIframe } from './dom';
-import { registerRewardsPanelFrameBridge, requestRewardsPanelFrame } from './rewards-bridge';
+import { isRewardsPanelFrameContext, registerRewardsPanelFrameBridge, requestRewardsPanelFrame } from './rewards-bridge';
 import searchPromotionTerms from '../config/search-promotion-terms.json';
 import { isBingHost, normalizeBingTaskUrl, buildRewardsFlyoutUrl, buildRewardsReturnUrl, isRewardsHost } from './navigation';
 
@@ -21,6 +21,7 @@ export interface RewardsPanelSnapshot {
     dailyTasksData: DailyTaskDisplayItem[];
     dailyTasksQueue: DailyTask[];
     iframeSearchTerms: string[];
+    unavailableTaskTitles?: string[];
 }
 
 export function parseEarnedProgressText(value: string): EarnedProgress | null {
@@ -171,6 +172,13 @@ export function getSearchTermsFromMainDoc() {
 // ========== Shared card parsing helpers ==========
 
 const VNEXT_TASK_SECTION_SELECTOR = '#dailyset, #exploreonbing, #moreactivities';
+const TASK_CARD_SELECTOR = '.promo_cont, .rw-card, .explore-card, .task-card, [data-task-id], [data-offer-id]';
+
+function isTaskCardLocked(card: Element): boolean {
+    const container = card.closest(TASK_CARD_SELECTOR) || card;
+    return Boolean(container.matches('[aria-disabled="true"], [disabled], [inert]') ||
+        container.querySelector('.locked_overlay, .locked_point, .locked_level_required_text, [aria-disabled="true"]'));
+}
 
 function isVNextTaskAction(card: Element): boolean {
     return Boolean(card.closest(VNEXT_TASK_SECTION_SELECTOR)) && (
@@ -220,6 +228,7 @@ function discoverCards(doc: Document): Set<Element> {
 }
 
 export function isRewardsTaskCard(card: Element): boolean {
+    if (isTaskCardLocked(card)) return false;
     const link = card.tagName.toLowerCase() === 'a' ? card : card.querySelector('a');
     const href = link ? (link.getAttribute('href') || '').trim() : '';
     const ariaLabel = card.getAttribute('aria-label') || '';
@@ -614,7 +623,8 @@ function getCardDisplayName(card: Element, idx: number): string {
     }
 
     if (!name) {
-        const titleElem = card.querySelector('h3, h4, .title, .rw-card-title, .promo-title, .promo_title, .card-title, [class*="promo-title"], [class*="Body2Strong"], div[class*="title"], img[alt]');
+        const titleElem = card.querySelector('h3, h4, .title, .rw-card-title, .promo-title, .promo_title, .card-title, [class*="promo-title"], [class*="Body2Strong"], div[class*="title"]') ||
+            card.querySelector('img[alt]:not(.locked_img)');
         if (titleElem && titleElem.tagName.toLowerCase() === 'img') {
             name = titleElem.getAttribute('alt') || '';
         } else if (titleElem && titleElem.textContent?.trim()) {
@@ -706,10 +716,32 @@ function addIframeSearchTerms(items: any[]): number {
 }
 
 let lastParsedAccountTotalPoints: number | null = null;
+let lastParsedUnavailableTaskTitles: string[] = [];
+
+function parsePointBalance(value: string): number | null {
+    if (!/^\s*\d[\d\s,.]*\s*$/.test(value)) return null;
+    const balance = Number(value.replace(/\D/g, ''));
+    return Number.isSafeInteger(balance) && balance >= 0 ? balance : null;
+}
+
+function findPointBalance(container: Element): number | null {
+    const values = Array.from(container.querySelectorAll('span, div, p, strong, b'))
+        .filter(element => element.children.length === 0)
+        .map(element => parsePointBalance(element.textContent || ''))
+        .filter((value): value is number => value !== null);
+    return values.length === 1 ? values[0] : null;
+}
 
 export function parseAccountTotalPoints(targetDoc: Document): number | null {
-    const root = targetDoc.querySelector('main') || targetDoc.body;
+    const root = targetDoc.body;
     if (!root) return null;
+
+    // The current Bing-native panel nests the balance and "我的积分" / "My
+    // points" in separate StackItems. Generated css-* classes are unstable.
+    for (const container of Array.from(root.querySelectorAll('.balance_card_points_clickable, .account-total'))) {
+        const value = findPointBalance(container);
+        if (value !== null) return value;
+    }
 
     // Redesigned vNext flyout: <span class="text-sectionHeader">52,539</span>
     // next to <span class="text-labelControl">分</span>.
@@ -717,32 +749,23 @@ export function parseAccountTotalPoints(targetDoc: Document): number | null {
         '.text-sectionHeader + .text-labelControl, [class*="sectionHeader"] + [class*="labelControl"]'
     );
     if (labeled && /^(?:points?|pts|分)$/i.test((labeled.textContent || '').trim())) {
-        const value = Number(((labeled.previousElementSibling?.textContent) || '').replace(/\D/g, ''));
-        if (Number.isFinite(value) && value >= 0) return value;
+        const value = parsePointBalance(labeled.previousElementSibling?.textContent || '');
+        if (value !== null) return value;
     }
 
-    const numericElements = Array.from(root.querySelectorAll('span, div')).filter(element =>
-        element.children.length === 0 && /^\s*\d[\d\s,.]*\s*$/.test(element.textContent || '')
+    const labels = Array.from(root.querySelectorAll('span, div, p')).filter(element =>
+        element.children.length === 0 && /^(?:我的积分|可用积分|积分余额|总积分|my points|available points|points balance|total points)$/i
+            .test((element.textContent || '').trim())
     );
-    for (const element of numericElements) {
-        const parent = element.parentElement;
-        if (!parent) continue;
-        const siblings = Array.from(parent.children);
-        const hasPointsUnit = siblings.some(sibling =>
-            sibling !== element && /^(?:points?|pts|分)$/i.test((sibling.textContent || '').trim())
-        );
-        if (!hasPointsUnit) continue;
-
-        const value = Number((element.textContent || '').replace(/\D/g, ''));
-        if (Number.isFinite(value) && value >= 0) return value;
+    for (const label of labels) {
+        let container = label.parentElement;
+        for (let depth = 0; container && container !== root && depth < 2; depth++, container = container.parentElement) {
+            const value = findPointBalance(container);
+            if (value !== null) return value;
+        }
     }
-
-    // Fallback: compact "52,539分" / "52,539 points" text near a points unit.
-    const compact = (root.textContent || '').match(/(\d[\d\s,.]*)\s*(?:points?|pts|分)/i);
-    if (compact) {
-        const value = Number(compact[1].replace(/\D/g, ''));
-        if (Number.isFinite(value) && value >= 0) return value;
-    }
+    // Activity rewards, referral bonuses and daily fractions are not balances.
+    // Leave the value unknown so the caller can use the Bing medallion instead.
     return null;
 }
 
@@ -843,6 +866,7 @@ export function recordMissingAccountTotalPoints() {
 export function getDataFromPanel() {
     store.searchState.panelParsed = false;
     lastParsedAccountTotalPoints = null;
+    lastParsedUnavailableTaskTitles = [];
     let targetDoc = document;
     let isIframe = false;
     let iframeWin: (Window & Record<string, any>) | null = window;
@@ -865,7 +889,7 @@ export function getDataFromPanel() {
         console.log('未找到iframe，尝试从主文档获取数据');
     }
 
-    if (!isIframe && window.location.hostname !== 'rewards.bing.com') {
+    if (!isIframe && !isRewardsHost() && !isRewardsPanelFrameContext()) {
         console.log('当前不在 rewards.bing.com，且未能成功加载 iframe 内容，取消卡片解析，避免误抓取主页元素');
         return false;
     }
@@ -874,6 +898,10 @@ export function getDataFromPanel() {
         (() => {
             const tasks: DailyTaskDisplayItem[] = [];
             const cardsArray = discoverCards(targetDoc);
+            lastParsedUnavailableTaskTitles = [...new Set(Array.from(cardsArray)
+                .filter(isTaskCardLocked)
+                .map(card => getCardDisplayName(card, 0)))];
+            const unavailableTitles = new Set(lastParsedUnavailableTaskTitles.map(title => title.toLowerCase()));
             const finalCards = filterCards(cardsArray);
             const observedCardKeys = new Set<string>();
 
@@ -908,11 +936,12 @@ export function getDataFromPanel() {
                 tasks.push({ name, status: displayStatus });
             });
 
-            if (finalCards.length > 0) {
-                store.searchState.dailyTasksQueue = store.searchState.dailyTasksQueue.filter(task =>
-                    task.source !== 'card' || observedCardKeys.has(getDailyTaskKey(task))
-                );
-            }
+            store.searchState.dailyTasksQueue = store.searchState.dailyTasksQueue.filter(task =>
+                task.source !== 'card' || (
+                    !unavailableTitles.has(cleanupTaskText(task.title).toLowerCase()) &&
+                    (finalCards.length === 0 || observedCardKeys.has(getDailyTaskKey(task)))
+                )
+            );
 
             console.log('\n[RewardsHelper] ======== 任务卡片解析结束 ========');
             console.log('[RewardsHelper] 解析出的最终任务列表:', tasks);
@@ -1042,7 +1071,8 @@ function createRewardsPanelSnapshot(parsed: boolean): RewardsPanelSnapshot {
             ...task,
             searchTerms: [...task.searchTerms]
         })),
-        iframeSearchTerms: [...store.iframeSearchTerms]
+        iframeSearchTerms: [...store.iframeSearchTerms],
+        unavailableTaskTitles: [...lastParsedUnavailableTaskTitles]
     };
 }
 
@@ -1053,6 +1083,9 @@ export function applyRewardsPanelSnapshot(snapshot: RewardsPanelSnapshot): boole
         ? snapshot.dailyTasksQueue.filter(task => task && typeof task.url === 'string' && typeof task.title === 'string')
         : [];
     const incomingKeys = new Set(incomingTasks.map(getDailyTaskKey));
+    const unavailableTitles = new Set((Array.isArray(snapshot.unavailableTaskTitles) ? snapshot.unavailableTaskTitles : [])
+        .filter((title): title is string => typeof title === 'string')
+        .map(title => normalizeCandidateText(title).toLowerCase()));
     const incomingStatuses = new Map(
         (Array.isArray(snapshot.dailyTasksData) ? snapshot.dailyTasksData : [])
             .map(item => [normalizeCandidateText(item.name || item.title || '').toLowerCase(), item.status] as const)
@@ -1061,6 +1094,7 @@ export function applyRewardsPanelSnapshot(snapshot: RewardsPanelSnapshot): boole
 
     store.searchState.dailyTasksQueue = store.searchState.dailyTasksQueue.filter(task => {
         if (task.source !== 'card') return true;
+        if (unavailableTitles.has(normalizeCandidateText(task.title).toLowerCase())) return false;
         if (incomingKeys.has(getDailyTaskKey(task))) return true;
 
         const normalizedTitle = normalizeCandidateText(task.title).toLowerCase();
@@ -1200,18 +1234,18 @@ async function clickTaskCardInDocument(task: DailyTask, targetDoc: Document): Pr
     try {
         const url = task.url;
         const matchingLinks = Array.from(targetDoc.querySelectorAll('a'))
-            .filter(a => hrefMatchesTask(a.getAttribute('href'), url));
+            .filter(a => hrefMatchesTask(a.getAttribute('href'), url) && !isTaskCardLocked(a));
         const normalizedTaskTitle = cleanupTaskText(task.title).toLowerCase();
         const linkElem = matchingLinks.find(link => {
-            const card = link.closest('.promo_cont, .rw-card, .explore-card, .task-card, [data-task-id], [data-offer-id]') || link;
+            const card = link.closest(TASK_CARD_SELECTOR) || link;
             return cleanupTaskText(getCardDisplayName(card, 0)).toLowerCase() === normalizedTaskTitle;
-        }) || matchingLinks[0];
+        });
         const pressableElem = Array.from(targetDoc.querySelectorAll([
             '#dailyset [role="link"]',
             '#exploreonbing [role="link"]',
             '#moreactivities [role="link"]'
         ].join(', '))).find(card =>
-            cleanupTaskText(getCardDisplayName(card, 0)).toLowerCase() === normalizedTaskTitle
+            !isTaskCardLocked(card) && cleanupTaskText(getCardDisplayName(card, 0)).toLowerCase() === normalizedTaskTitle
         ) as HTMLElement | undefined;
         const actionElem = (linkElem || pressableElem) as HTMLElement | undefined;
 
